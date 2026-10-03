@@ -7,6 +7,7 @@
 结果按图形 API 或技术类别组织在根目录下。每个任务目录通常包含任务定义、模型生成的工程结果以及对应的构建配置：
 
 - `OpenGL/`：现有的 OpenGL 编程任务（用 OpenGL 4.6 Core Profile）及不同模型的完成结果
+- `Vulkan/`：VulkanWindow、RubikCube 等 Vulkan 编程任务及不同模型的完成结果
 
 ## 文档（Wiki）
 
@@ -14,6 +15,7 @@
 
 - [Wiki 首页](https://github.com/yhcedpn/RenderArena/wiki)：项目介绍与构建指南
 - [OpenGL 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：任务清单、Release 产物与相关评审 issue
+- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：任务清单、模型答卷与工程接入说明
 
 ## 构建
 

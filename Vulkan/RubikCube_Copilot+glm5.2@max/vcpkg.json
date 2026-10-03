@@ -13,5 +13,5 @@
     "spirv-reflect",
     "nlohmann-json"
   ],
-  "builtin-baseline": "0000000000000000000000000000000000000000"
+  "builtin-baseline": "1460b31b08c42cc2e9ac2c79f45ec8707e2675e2"
 }

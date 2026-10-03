@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件"><UniqueIdentifier>{142cda2b-2772-4b9a-9eda-79a0f9f533bb}</UniqueIdentifier></Filter>
+    <Filter Include="头文件"><UniqueIdentifier>{ae768f4f-73ee-44e7-85ad-185a4975b8f7}</UniqueIdentifier></Filter>
+    <Filter Include="资源文件"><UniqueIdentifier>{f209f032-791d-4f70-9628-5cb0df5179b1}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\config.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\texture_gen.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\scene.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\vulkan_engine.cpp"><Filter>源文件</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\config.h"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\texture_gen.h"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\scene.h"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\vulkan_engine.h"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\vulkan14_host_image_copy_compat.h"><Filter>头文件</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\scene.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\scene.frag"><Filter>源文件</Filter></None>
+    <None Include="materials.json"><Filter>资源文件</Filter></None>
+    <None Include="RubikCube_TASK.md"><Filter>资源文件</Filter></None>
+    <None Include="CMakeLists.txt"><Filter>资源文件</Filter></None>
+    <None Include="CMakePresets.json"><Filter>资源文件</Filter></None>
+    <None Include="platforms.json"><Filter>资源文件</Filter></None>
+    <None Include="vcpkg.json"><Filter>资源文件</Filter></None>
+  </ItemGroup>
+</Project>

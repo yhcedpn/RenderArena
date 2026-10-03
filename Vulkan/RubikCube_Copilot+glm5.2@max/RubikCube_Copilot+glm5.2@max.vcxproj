@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>MakeFileProj</Keyword>
+    <ProjectGuid>{bd90efb9-6b51-4204-bcb4-7eb0c384dbb1}</ProjectGuid>
+    <RootNamespace>RubikCubeCopilotglm52max</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <!-- VS 委托同一份 CMake 配置构建，避免两套依赖链接规则逐渐偏离。 -->
+  <PropertyGroup>
+    <ArenaCMake>$(VSInstallDir)Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe</ArenaCMake>
+    <ArenaPreset Condition="'$(Configuration)'=='Debug'">windows-msvc-debug</ArenaPreset>
+    <ArenaPreset Condition="'$(Configuration)'=='Release'">windows-msvc-release</ArenaPreset>
+    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'!=''">$(VCPKG_ROOT)</ArenaVcpkgRoot>
+    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'==''">$(VSInstallDir)VC\vcpkg</ArenaVcpkgRoot>
+    <OutDir>$(ProjectDir)out\$(ArenaPreset)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)out\$(ArenaPreset)\vs\</IntDir>
+    <NMakeBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"&#xD;&#xA;cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration)</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"&#xD;&#xA;cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --clean-first</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; if exist "out\$(ArenaPreset)\CMakeCache.txt" "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(OutDir)rubik_cube.exe</NMakeOutput>
+    <NMakeIncludeSearchPath>$(ProjectDir)src;$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include;$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+    <AdditionalOptions>/std:c++20 %(AdditionalOptions)</AdditionalOptions>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\config.cpp" />
+    <ClCompile Include="src\texture_gen.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClCompile Include="src\vulkan_engine.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\config.h" />
+    <ClInclude Include="src\texture_gen.h" />
+    <ClInclude Include="src\scene.h" />
+    <ClInclude Include="src\vulkan_engine.h" />
+    <ClInclude Include="src\vulkan14_host_image_copy_compat.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\scene.vert" />
+    <None Include="shaders\scene.frag" />
+    <None Include="materials.json" />
+    <None Include="RubikCube_TASK.md" />
+    <None Include="CMakeLists.txt" />
+    <None Include="CMakePresets.json" />
+    <None Include="platforms.json" />
+    <None Include="vcpkg.json" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

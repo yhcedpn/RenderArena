@@ -4,6 +4,8 @@
 
 | 题目 | 主题 | 已归档答卷 |
 | --- | --- | --- |
+| [VulkanWindow](Vulkan-BenchmarkTasks/VulkanWindow) | Vulkan 窗口与四象限渲染 | omp + gpt-5.6-luna、omp + deepseek-v4-flash-0731、Copilot + glm-5.2 |
+| [RubikCube](Vulkan-BenchmarkTasks/RubikCube) | Vulkan 1.4、配置驱动 PBR、程序化纹理与部分缺失魔方 | omp + gpt-5.6-luna、Copilot + glm-5.2 |
 | [MiniVoxelPathTracer](Vulkan-BenchmarkTasks/MiniVoxelPathTracer) | Vulkan 1.4 硬件路径追踪、GPU wavefront、ReSTIR DI 与 SVGF | Codex + gpt-6.1-sol@high（Windows 已核验，Linux 未核验） |
 
 构建方法见 [Home](Home)。Windows/Linux 构建矩阵仅验证编译；画面、同步、输入和资源释放仍需按题目实际验收。Release 发布流程按各答卷的 `build_platforms` 筛选，失败答卷不能视为已经有可用发布产物。
