@@ -1,0 +1,36 @@
+#version 460
+#include "common.glsl"
+layout(local_size_x=64) in;
+vec3 demod(vec3 c,Guide g){if(g.id.w==0u||uint(materials[g.id.y].params.x)!=0u)return c;return vec3(g.albedo.r>0?c.r/g.albedo.r:0,g.albedo.g>0?c.g/g.albedo.g:0,g.albedo.b>0?c.b/g.albedo.b:0);}
+void main(){
+ uint slot=(gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x)*64u+gl_LocalInvocationID.x,N=pixels();if(slot>=N*3)return;
+ Guide g=guides().v[slot];uint pixel=slot/3;
+ if(pc.pass==0u){
+  vec3 c=demod(radiance().v[slot].rgb,g);float l=lum(c);History h;h.color=vec4(c,0);h.moments=vec4(l,l*l,1,0);
+  int prev=previous(g,slot);if(prev>=0){History old=oldH().v[prev];float len=min(old.moments.z+1,32),a=1/len;h.color.rgb=mix(old.color.rgb,c,a);h.moments=vec4(mix(old.moments.xy,vec2(l,l*l),a),len,0);}
+  h.color.w=max(h.moments.y-h.moments.x*h.moments.x,0);temporalH().v[slot]=h;return;
+ }
+ if(pc.pass==1u){
+  History h=temporalH().v[slot];float variance=h.color.w;
+  if(h.moments.z<4&&g.id.w!=0u){vec2 moments=vec2(0);float sum=0;
+   for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){ivec2 p=ivec2(pixel%f.extent.x,pixel/f.extent.x)+ivec2(x,y);if(any(lessThan(p,ivec2(0)))||any(greaterThanEqual(p,ivec2(f.extent.xy))))continue;uint j=(uint(p.y)*f.extent.x+uint(p.x))*3+slot%3;
+    if(!compatible(g,guides().v[j]))continue;float l=lum(demod(radiance().v[j].rgb,guides().v[j]));moments+=vec2(l,l*l);sum++;}
+   if(sum>0){moments/=sum;variance=max(variance,max(moments.y-moments.x*moments.x,0));}
+  }storeFilter(slot,vec4(h.color.rgb,variance));return;
+ }
+ if(pc.pass==3u){
+  if(slot>=N)return;vec3 c=vec3(0);for(uint b=0;b<3;b++){Guide a=guides().v[slot*3+b];vec3 v=loadFilter(slot*3+b).rgb;if(a.id.w!=0u&&uint(materials[a.id.y].params.x)==0u)v*=a.albedo.rgb;c+=v;}outputImage().v[slot]=vec4(c,1);return;
+ }
+ vec4 center=loadFilter(slot);if(g.id.w==0u||uint(materials[g.id.y].params.x)==4u){storeFilter(slot,center);return;}
+ const float kernel[5]=float[5](1,4,6,4,1);vec3 color=vec3(0);float variance=0,sum=0;
+ for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){
+  ivec2 p=ivec2(pixel%f.extent.x,pixel/f.extent.x)+ivec2(x,y)*int(pc.step);if(any(lessThan(p,ivec2(0)))||any(greaterThanEqual(p,ivec2(f.extent.xy))))continue;
+  uint j=(uint(p.y)*f.extent.x+uint(p.x))*3+slot%3;Guide ng=guides().v[j];
+  if(g.id.w!=ng.id.w||any(notEqual(g.id.xyz,ng.id.xyz))||any(notEqual(g.opt,ng.opt))||any(notEqual(g.chain0,ng.chain0))||any(notEqual(g.chain1,ng.chain1)))continue;
+  vec4 v=loadFilter(j);float dist=length(g.p.xyz-ng.p.xyz),scale=max(.02,length(g.p.xyz-f.cam[0].xyz)*2*f.cam[3].w/float(f.extent.y));
+  // 几何尺度随像素足迹及迭代步长增长；亮度尺度来自传播后的方差，1e-8 仅防止零除。
+  float w=kernel[x+2]*kernel[y+2]*pow(max(dot(g.n.xyz,ng.n.xyz),0),32)*exp(-dist/(scale*float(pc.step)*2)-abs(g.n.w-ng.n.w)*8-abs(lum(center.rgb)-lum(v.rgb))/(4*sqrt(max(center.w+v.w,1e-8))));
+  color+=v.rgb*w;variance+=v.w*w*w;sum+=w;
+ }// 有效中心样本必然以正 kernel 权重参与，因此归一化分母严格为正。
+ storeFilter(slot,vec4(color/sum,variance/(sum*sum)));
+}

@@ -1,0 +1,49 @@
+#version 460
+#include "common.glsl"
+layout(local_size_x=64) in;
+// 整数圆盘按行枚举全部 196 个非零偏移；先抽编号再解码，避免浮点 round 扩大实际半径。
+const int diskHalfWidth[17]=int[17](0,3,5,6,6,7,7,7,8,7,7,7,6,6,5,3,0);
+const uint diskPrefix[18]=uint[18](0u,1u,8u,19u,32u,45u,60u,75u,90u,106u,121u,136u,151u,164u,177u,188u,195u,196u);
+ivec2 diskOffset(uint index){
+ uint lo=0u,hi=16u;
+ while(lo<hi){uint mid=(lo+hi)/2u;if(index>=diskPrefix[mid+1u])lo=mid+1u;else hi=mid;}
+ int y=int(lo)-8,x=int(index-diskPrefix[lo])-diskHalfWidth[lo];
+ if(y==0&&x>=0)x++;
+ return ivec2(x,y);
+}
+void main(){
+ uint i=(gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x)*64u+gl_LocalInvocationID.x;if(i>=pixels())return;uint slot=i*3;
+ Guide g=guides().v[slot];uint s=seed(i,0,100+pc.pass);
+ if(pc.pass==0u){
+  Reservoir r=emptyR();
+  if(g.id.w!=0u&&g.id.z==0u&&f.settings.x>0u)for(uint k=0;k<4u;k++){Reservoir c=fresh(s);float t=target(g,c);offer(r,c,t/areaPDF(c.tri),1,s);}
+  r.target=r.sum>0?target(g,r):0;r.W=r.target>0?r.sum/(r.M*r.target):0;initialR().v[i]=r;return;
+ }
+ if(pc.pass==3u){
+  Reservoir r=finalR().v[i];if(r.W>0){float dp,bp;vec3 c=direct(g,r,dp,bp);shadowTask(g.realp.xyz,g.n.xyz,r,c*r.W,slot);}return;
+ }
+ Reservoir sources[5];Guide gs[5];uint count=1;
+ sources[0]=pc.pass==1u?initialR().v[i]:temporalR().v[i];gs[0]=g;
+ if(pc.pass==1u){
+  int prev=previous(g,slot);if(prev>=0){sources[count]=oldR().v[uint(prev)/3];gs[count]=oldGuides().v[prev];float m=min(sources[count].M,32);if(sources[count].M>0)sources[count].sum*=m/sources[count].M;sources[count].M=m;count++;}
+ }else{
+  uint chosen[4];
+  for(uint k=0;k<4u;k++){
+   // 在剩余编号中抽样，并按已选的有序编号映射，保证四个邻居彼此不同。
+   uint index=uint(random(s)*float(196u-k));
+   for(uint j=0;j<k;j++)if(index>=chosen[j])index++;
+   uint insertion=k;
+   while(insertion>0u&&chosen[insertion-1u]>index){chosen[insertion]=chosen[insertion-1u];insertion--;}
+   chosen[insertion]=index;
+   ivec2 p=ivec2(i%f.extent.x,i/f.extent.x)+diskOffset(index);
+   if(any(lessThan(p,ivec2(0)))||any(greaterThanEqual(p,ivec2(f.extent.xy))))continue;uint j=uint(p.y)*f.extent.x+uint(p.x);
+   Guide ng=guides().v[j*3];if(!compatible(g,ng))continue;sources[count]=temporalR().v[j];gs[count]=ng;count++;
+  }
+ }
+ Reservoir result=emptyR();
+ for(uint k=0;k<count;k++)offer(result,sources[k],target(g,sources[k])*sources[k].W*sources[k].M,sources[k].M,s);
+ // 支持域校正：只将选中样本处 target>0 的源 multiplicity 纳入归一化。
+ float supported=0;if(result.sum>0)for(uint k=0;k<count;k++)if(target(gs[k],result)>0)supported+=sources[k].M;
+ result.target=result.sum>0?target(g,result):0;result.W=result.target>0&&supported>0?result.sum/(result.target*supported):0;
+ if(pc.pass==1u)temporalR().v[i]=result;else finalR().v[i]=result;
+}

@@ -1,0 +1,8 @@
+#version 460
+#include "common.glsl"
+layout(local_size_x=64) in;
+void main(){
+ uint i=(gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x)*64u+gl_LocalInvocationID.x;if(i>=counts().v[2])return;
+ // 一次 shading 中每条路径只有一个 shadow；ReSTIR 使用独立 dispatch。
+ Shadow sh=shadows().v[i];addRadiance(sh.id.x,shadowResults().v[i].rgb);
+}

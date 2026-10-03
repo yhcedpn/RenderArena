@@ -1,6 +1,6 @@
 # OpenGL 图形编程任务
 
-本页对应当前仓库 `OpenGL/` 目录下的四道 OpenGL 4.6 Core Profile 图形编程任务（难度由简单到复杂），以及不同模型在这些任务上的完成结果与评审。目前尚未包含使用 Vulkan 等其他图形 API 的编程任务。
+本页对应当前仓库 `OpenGL/` 目录下的四道 OpenGL 4.6 Core Profile 图形编程任务（难度由简单到复杂），以及不同模型在这些任务上的完成结果与评审。Vulkan 任务见 [Vulkan 图形编程任务](Vulkan-BenchmarkTasks)。
 
 ## 任务清单
 
