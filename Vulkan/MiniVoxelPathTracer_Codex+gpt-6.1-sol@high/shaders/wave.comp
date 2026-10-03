@@ -1,0 +1,99 @@
+#version 460
+#include "common.glsl"
+layout(local_size_x=64) in;
+void identity(inout Path p){p.r0=vec4(1,0,0,0);p.r1=vec4(0,1,0,0);p.r2=vec4(0,0,1,0);}
+void chain(inout Path p,Triangle t,bool transmission){
+ uint k=p.flags.w;if(k<4u)p.chain0[k]=t.info.y*2+uint(transmission);else if(k<8u)p.chain1[k-4]=t.info.y*2+uint(transmission);
+ p.flags.w++;
+ if(transmission){p.data.w=3;return;}
+ vec3 n=t.n.xyz;float d=dot(n,t.a.xyz);
+ for(uint j=0;j<3u;j++){vec4 r=j==0u?p.r0:(j==1u?p.r1:p.r2);float v=dot(r.xyz,n);r.xyz-=2*v*n;r.w+=2*d*v;if(j==0u)p.r0=r;else if(j==1u)p.r1=r;else p.r2=r;}
+}
+Guide makeGuide(Path p,Triangle t,vec3 pos,vec3 normal,vec3 albedo,float rough){
+ Guide g;g.realp=vec4(pos,length(pos-p.prev.xyz));g.p=g.realp;g.n=vec4(normal,rough);g.albedo=vec4(albedo,0);g.wo=vec4(-p.d.xyz,0);
+  // 随机非 delta 前缀之后再首次遇到玻璃时，没有纯反射的相机映射；保留该分支的当前贡献而不宣称历史有效。
+ g.id=uvec4(t.info.y,t.info.x,uint(p.data.w),uint(p.prev.w==0||p.data.w==0));g.opt=uvec4(p.flags.w,p.flags.x,p.id.w,0);g.chain0=p.chain0;g.chain1=p.chain1;
+ if(g.id.z==1u||g.id.z==2u){g.p.xyz=vec3(dot(p.r0,vec4(pos,1)),dot(p.r1,vec4(pos,1)),dot(p.r2,vec4(pos,1)));g.n.xyz=vec3(dot(p.r0.xyz,normal),dot(p.r1.xyz,normal),dot(p.r2.xyz,normal));}
+ return g;
+}
+void append(Path p,inout uint s){
+ if(p.id.z>=4u){float rr=clamp(max(p.beta.r,max(p.beta.g,p.beta.b)),.05,.95);if(random(s)>=rr)return;p.beta.rgb/=rr;}
+ uint dst=atomicAdd(counts().v[1-pc.q],1);storeOutput(dst,p);
+}
+float fresnel(float ci,float eta,out float ct){
+ float st2=eta*eta*max(0,1-ci*ci);if(st2>=1){ct=0;return 1;}ct=sqrt(1-st2);
+ float rs=(eta*ci-ct)/(eta*ci+ct),rp=(ci-eta*ct)/(ci+eta*ct);return .5*(rs*rs+rp*rp);
+}
+void main(){
+ uint i=(gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x)*64u+gl_LocalInvocationID.x,N=pixels();
+ if(pc.pass==0u){
+  if(i>=N*3)return;radiance().v[i]=vec4(0);Guide g;g.p=vec4(0);g.n=vec4(0);g.albedo=vec4(0);g.wo=vec4(0);g.realp=vec4(0);g.id=uvec4(0);g.opt=uvec4(0);g.chain0=uvec4(0);g.chain1=uvec4(0);guides().v[i]=g;
+  if(i>=N)return;
+  vec2 xy=(vec2(i%f.extent.x,i/f.extent.x)+f.jitter.xy)/vec2(f.extent.xy)*2-1;
+  vec3 d=normalize(f.cam[1].xyz+f.cam[2].xyz*xy.x*f.cam[2].w-f.cam[3].xyz*xy.y*f.cam[3].w);
+  Path p;p.o=vec4(f.cam[0].xyz,.05/dot(d,f.cam[1].xyz));p.d=vec4(d,0);p.beta=vec4(1);identity(p);
+  p.id=uvec4(i,i*3,0,uint(all(greaterThan(f.cam[0].xyz,vec3(7,.125,7)))&&all(lessThan(f.cam[0].xyz,vec3(9,2.125,9)))));
+  p.flags=uvec4(0);p.chain0=uvec4(0);p.chain1=uvec4(0);p.data=vec4(0,0,2*f.cam[3].w/float(f.extent.y),0);p.prev=vec4(f.cam[0].xyz,0);
+  storeInput(i,p);if(i==0u){counts().v[pc.q]=N;counts().v[1-pc.q]=0;counts().v[2]=0;}return;
+ }
+ if(pc.pass==1u){
+  if(i!=0u)return;counts().v[1-pc.q]=0;counts().v[2]=0;return;
+ }
+ if(pc.pass==3u){
+  if(i!=0u)return;uint c=counts().v[pc.q],sh=counts().v[2];uint w=min(f.settings.y,max(c,1u));
+  indirect().v[0]=w;indirect().v[1]=(max(c,1u)+w-1)/w;indirect().v[2]=1;
+  w=min(f.settings.y,max(sh,1u));indirect().v[3]=w;indirect().v[4]=(max(sh,1u)+w-1)/w;indirect().v[5]=1;return;
+ }
+
+ if(i>=counts().v[pc.q])return;
+ Path p=loadPath(i);Hit h=hits().v[i];uint s=seed(p.id.x,p.id.y,16+p.id.z*16);
+ if(h.tri==0xffffffffu)return;
+ Triangle t=triangles[h.tri];Material m=materials[t.info.x];vec3 pos=p.o.xyz+p.d.xyz*h.t,n=t.n.xyz;
+ if(p.id.w!=0u)p.beta.rgb*=exp(-materials[f.settings.z>>16].absorption.rgb*length(pos-p.prev.xyz));
+ p.data.y+=length(pos-p.prev.xyz)*p.data.z;
+ vec3 albedo;float rough;textureAt(t,pos,p.data.y/max(abs(dot(n,p.d.xyz)),.05),albedo,rough);
+ uint type=uint(m.params.x);bool front=dot(p.d.xyz,n)<0;vec3 face=front?n:-n;
+ if(type==4u){
+  float weight=1;
+  if(p.flags.z==1u)weight=0;
+  else if(p.flags.z==2u){float cl=max(dot(n,-p.d.xyz),0);float lp=cl>0?areaPDF(h.tri)*dot(pos-p.prev.xyz,pos-p.prev.xyz)/cl:0;weight=p.data.x*p.data.x/(p.data.x*p.data.x+lp*lp);}
+  if(front)addRadiance(p.id.y,p.beta.rgb*m.emission.rgb*weight);
+  if(p.flags.y==0u&&p.flags.w>0u)guides().v[p.id.y]=makeGuide(p,t,pos,face,albedo,rough);
+  return;
+ }
+ if(p.id.z==8u)return;
+ if(type==2u){
+  if(p.flags.y==0u){if(p.data.w==0)p.data.w=1;chain(p,t,false);}
+  p.beta.rgb*=albedo;p.prev.xyz=pos;p.o=vec4(offsetRay(pos,n,reflect(p.d.xyz,face)),.0001);p.d.xyz=reflect(p.d.xyz,face);p.id.z++;p.flags.z=0;append(p,s);return;
+ }
+ if(type==3u){
+  float eta=p.id.w!=0u?m.params.z:1/m.params.z;float ct;float F=fresnel(max(dot(-p.d.xyz,face),0),eta,ct);
+  vec3 reflected=reflect(p.d.xyz,face),transmitted=eta*p.d.xyz+(eta*dot(-p.d.xyz,face)-ct)*face;
+  if(p.flags.x==0u){
+   Path r=p;r.flags.x=1;r.id.y=p.id.x*3+1;r.flags.y=0;r.data.w=2;if(p.flags.y!=0u){identity(r);r.chain0=uvec4(0);r.chain1=uvec4(0);r.flags.w=0;}
+   r.prev.xyz=pos;r.beta.rgb*=F;r.d.xyz=reflected;r.o=vec4(offsetRay(pos,n,reflected),.0001);r.id.z++;r.flags.z=0;chain(r,t,false);
+   if(F>0)append(r,s);
+   if(F<1){
+    Path tr=p;tr.flags.x=1;tr.id.y=p.id.x*3+2;tr.flags.y=0;tr.data.w=3;if(p.flags.y!=0u){identity(tr);tr.chain0=uvec4(0);tr.chain1=uvec4(0);tr.flags.w=0;}
+    tr.prev.xyz=pos;tr.beta.rgb*=(1-F)*eta*eta;tr.d.xyz=normalize(transmitted);tr.o=vec4(offsetRay(pos,n,tr.d.xyz),.0001);tr.id.w=1-p.id.w;tr.id.z++;tr.flags.z=0;tr.data.z*=eta;chain(tr,t,true);s=seed(tr.id.x,tr.id.y,16+tr.id.z*16);append(tr,s);
+   }return;
+  }
+  bool refl=random(s)<F;
+  if(!refl){p.beta.rgb*=eta*eta;p.id.w=1-p.id.w;p.data.z*=eta;}
+  if(p.flags.y==0u)chain(p,t,!refl);
+  p.prev.xyz=pos;p.d.xyz=refl?reflected:normalize(transmitted);p.o=vec4(offsetRay(pos,n,p.d.xyz),.0001);p.id.z++;p.flags.z=0;append(p,s);return;
+ }
+ // 非 delta 终端用实体法线求值，虚拟 guide 仅用于历史映射。
+ Guide localG=makeGuide(p,t,pos,face,albedo,rough);localG.p=vec4(pos,0);localG.n=vec4(face,rough);
+ if(p.flags.y==0u){guides().v[p.id.y]=makeGuide(p,t,pos,face,albedo,rough);p.flags.y=1;}
+ bool restir=p.id.z==0u;
+ if(!restir&&f.settings.x>0u){
+  Reservoir r=fresh(s);float dp,bp;vec3 c=direct(localG,r,dp,bp);float ap=areaPDF(r.tri);
+  // 零目标候选的贡献严格为零，不能对两项均为零的 MIS 分母求商。
+  if(ap>0&&lum(c)>0){float mis=dp*dp/(dp*dp+bp*bp);shadowTask(pos,n,r,p.beta.rgb*c*(mis/ap),p.id.y);}
+ }
+ vec3 wi=sampleBSDF(-p.d.xyz,face,rough,type,s);float pdf;vec3 fr=bsdf(-p.d.xyz,wi,face,albedo,rough,type,pdf);
+ if(pdf<=0)return;
+ p.beta.rgb*=fr*max(dot(face,wi),0)/pdf;p.data.x=pdf;p.data.z=max(p.data.z,rough*.25);
+ p.prev=vec4(pos,1);p.o=vec4(offsetRay(pos,n,wi),.0001);p.d.xyz=wi;p.id.z++;p.flags.z=restir?1u:2u;append(p,s);
+}

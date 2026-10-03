@@ -1,0 +1,17 @@
+#version 460
+#define RT_STAGE
+#include "common.glsl"
+layout(location=0) rayPayloadEXT Hit payload;
+void main(){
+ uint i=gl_LaunchIDEXT.x+gl_LaunchIDEXT.y*gl_LaunchSizeEXT.x;
+ bool sh=pc.pass==1u;uint count=counts().v[sh?2:pc.q];if(i>=count)return;
+ payload.t=0;payload.tri=0xffffffffu;
+ if(sh){
+  Shadow s=shadows().v[i];
+  traceRayEXT(world,gl_RayFlagsOpaqueEXT|gl_RayFlagsTerminateOnFirstHitEXT,255,0,0,0,s.o.xyz,.0001,s.d.xyz,s.d.w,0);
+  shadowResults().v[i]=payload.tri==0xffffffffu?s.value:vec4(0);
+ }else{
+  Path p=loadPath(i);
+  traceRayEXT(world,gl_RayFlagsOpaqueEXT,255,0,0,0,p.o.xyz,p.o.w,p.d.xyz,1e5,0);hits().v[i]=payload;
+ }
+}
