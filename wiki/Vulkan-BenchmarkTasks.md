@@ -5,7 +5,9 @@
 | 题目 | 主题 | 已归档答卷 |
 | --- | --- | --- |
 | [MiniVoxelPathTracer](Vulkan-BenchmarkTasks/MiniVoxelPathTracer) | Vulkan 1.4 硬件路径追踪、GPU wavefront、ReSTIR DI 与 SVGF | Codex + gpt-6.1-sol@high（Windows 已核验，Linux 未核验） |
+
 构建方法见 [Home](Home)。Windows/Linux 构建矩阵仅验证编译；画面、同步、输入和资源释放仍需按题目实际验收。Release 发布流程按各答卷的 `build_platforms` 筛选，失败答卷不能视为已经有可用发布产物。
+
 ## MiniVoxelPathTracer
 
 [题面](Vulkan-BenchmarkTasks/MiniVoxelPathTracer)：Vulkan 1.4 硬件路径追踪、GPU wavefront、自研 ReSTIR DI 与 SVGF。Codex + gpt-6.1-sol@high 的答卷目录为 `Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high`，实际 pass、容量、归一化、历史与同步规则见答卷中的 `IMPLEMENTATION.md`。
