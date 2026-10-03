@@ -128,6 +128,7 @@ CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureS
 ## 六 相机与窗口操作
 
 - 默认可见窗口客户区为 1280×720；摄像机初始位置 `(8,2.5,20)`，看向 `(8,2,6)`，垂直 FOV=60°。
+- 标题栏保留程序名称，并显示平均帧率（FPS）和平均帧间隔（ms/frame），约每 0.5 秒更新一次。按正常帧循环的墙钟时间及成功 present 的帧数统计，包含渲染资源等待，不将该值标为 GPU 独立耗时；初始化、最小化暂停和交换链重建耗时不计入统计。启动、暂停或重建后暂显示占位符，积累新样本后恢复数值。
 - 针孔相机，右手 basis。主射线使用真实 framebuffer aspect ratio，近裁面为相机前方 0.05 单位的平面；不是把所有射线的 tMin 都固定为 0.05。
 - 每帧每像素的主射线使用子像素 jitter。guide 的重投影使用无 jitter 的前后帧相机，查找历史像素时显式补偿两帧 jitter。
 - WASD 在水平面移动，Q/E 向下/向上移动；基础速度 3 世界单位/秒，Shift 为 3 倍速度。按鼠标右键捕获鼠标并控制 yaw/pitch，释放右键解除捕获；pitch 限制在 ±89°，yaw 不限。
@@ -299,7 +300,7 @@ Timeline semaphore 可管理 GPU 工作完成与资源回收；交换链 acquire
 
 初始化、交换链重建与最终退出允许必要的等待安全点；不在普通每帧或每次反弹调用 `vkDeviceWaitIdle`/`vkQueueWaitIdle`。资源生命周期覆盖所有在途 command、AS/SBT、descriptor backing、history 与 swapchain 使用；关闭按完成依赖排空并逆序释放，不泄漏 Vulkan/GLFW 资源。
 
-使用 Vulkan Validation Layer 的 core 和 synchronization validation。warning、error 和诊断 message 按失败处理，INFO 仅记录；不关闭、过滤或修改验证层以掩盖问题。编译器与 shader 编译器的 warning、error 和诊断 message 同样按失败处理，正常构建进度不属于诊断。
+仅 Debug 构建启用 Vulkan Validation Layer 的 core 和 synchronization validation，并要求校验层可用；warning、error 和诊断 message 按失败处理，INFO 仅记录，不关闭、过滤或修改验证层以掩盖问题。Release 构建不启用校验层，也不请求校验专用的 debug utils 扩展或创建 debug messenger，不要求安装校验层。编译器与 shader 编译器的 warning、error 和诊断 message 在所有构建模式下同样按失败处理，正常构建进度不属于诊断。
 
 ## 十三 必需优化机制与禁止替代
 
@@ -343,7 +344,7 @@ Timeline semaphore 可管理 GPU 工作完成与资源回收；交换链 acquire
 | 相机移动 | 普通/纯反射有效历史继续重投影，新揭露区域不拖旧内容；透射历史当帧拒绝而空间滤波继续，不全局 reset |
 | 轮廓与合成 | 墙边、镜边、玻璃边和发光面不过度跨域混合；最终合成无明显重复计能、gamma 错误或持续变亮 |
 | wavefront 与优化 | 有真实紧凑 GPU 队列、间接参数、静态 BLAS compact copy、greedy meshing 与 footprint mip 消费路径 |
-| 窗口生命周期 | 缩放、高 DPI、最小化恢复、R、捕获/释放鼠标、关闭正常；core/sync validation 无失败诊断 |
+| 窗口生命周期 | 缩放、高 DPI、最小化恢复、R、捕获/释放鼠标、关闭正常；标题栏更新 FPS 和 ms/frame，暂停/重建后重新统计；Debug 下 core/sync validation 无失败诊断，Release 不启用校验层 |
 
 交互检查至少包含：从初始位置进入展厅；横向移动观察遮挡揭露；转向两个镜面观察镜中内容；在玻璃前静止观察再移动；穿入并离开玻璃；缩放/最小化/恢复；R 重置；正常关闭。
 
