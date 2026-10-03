@@ -15,11 +15,11 @@
 
 - [Wiki 首页](https://github.com/yhcedpn/RenderArena/wiki)：项目介绍与构建指南
 - [OpenGL 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：任务清单、Release 产物与相关评审 issue
-- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：任务清单、模型答卷与工程接入说明
+- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：任务清单、模型答卷与核验结果
 
 ## 构建
 
-构建以 CMake 为跨平台契约：Windows 可用 VS2026（`RenderArena.slnx`）或 CMake，Linux 使用 CMake；依赖由各任务目录 `vcpkg.json` 管理。完整步骤与平台适用性见 [Wiki · 如何构建](https://github.com/yhcedpn/RenderArena/wiki/Home)。
+构建以 CMake 为跨平台契约：Windows 可用 VS2026（`RenderArena.slnx`）或 CMake，Linux 使用 CMake；依赖由各任务目录 `vcpkg.json` 管理。完整步骤与平台适用性见 [Wiki · 如何构建](https://github.com/yhcedpn/RenderArena/wiki#如何构建)。
 
 ## 适合用来观察什么
 

@@ -1,5 +1,24 @@
 # MiniVoxelPathTracer Vulkan 路径追踪编程能力测评
 
+## 答卷与相关文档
+
+| 工具与模型 | 答卷源码 | 任务定义 | 实现说明 |
+| --- | --- | --- | --- |
+| Codex + gpt-6.1-sol@high | [答卷目录](https://github.com/yhcedpn/RenderArena/tree/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high) | [MiniVoxelPathTracer_TASK.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/MiniVoxelPathTracer_TASK.md) | [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/IMPLEMENTATION.md) |
+
+答卷使用独立 Codex 会话生成，生成阶段禁止联网搜索及读取任务目录外的内容；实现包含代码复查反馈后的修正。下文为完整任务规格，实际 pass 顺序、队列容量、ReSTIR 归一化、光学历史及同步规则见实现说明。
+
+## 构建与核验状态
+
+以下结果记录于 2026-10-03，详细核验范围见 [实现说明的实际核验章节](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/IMPLEMENTATION.md#实际核验)。构建方法见 [构建指南](https://github.com/yhcedpn/RenderArena/wiki#如何构建)。
+
+| 平台 | 已记录的核验结果 |
+| --- | --- |
+| Windows | Debug/Release 配置与构建无编译诊断；在 Radeon 780M 上实际渲染、正常关闭并退出 0，9 个 GLSL stage 运行时编译通过。Debug 启用 core/synchronization validation，无失败诊断；Release 不启用校验层或请求校验专用扩展。两种模式的标题栏 FPS 与 ms/frame 均持续更新，缩放及最小化恢复后重新统计。 |
+| Linux | 声明为目标平台，尚未执行构建与运行核验。 |
+
+运行核验还覆盖相机与窗口交互、镜面/玻璃分域历史、11 类非法材质配置拒绝及合法材质变化。记录中的早期 Release 校验层运行发生在构建模式策略调整之前；现有 Release 按题目要求关闭校验层。
+
 ## 一 任务目标与范围
 
 使用 **C++20、GLSL 和 Vulkan 1.4** 实现单窗口、可自由移动摄像机的小型体素展厅。完整渲染链必须包含硬件光线追踪、GPU wavefront 多反弹积分、自研 ReSTIR DI、自研 SVGF、平面镜的反射空间重投影，以及独立的厚玻璃反射和透射信号处理。
