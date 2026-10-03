@@ -56,4 +56,18 @@
     <None Include="vcpkg-configuration.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ItemGroup>
+    <ClInclude Include="scene.hpp" />
+    <None Include="IMPLEMENTATION.md" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\display.frag" />
+    <None Include="shaders\display.vert" />
+    <None Include="shaders\hit.rchit" />
+    <None Include="shaders\miss.rmiss" />
+    <None Include="shaders\restir.comp" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\svgf.comp" />
+    <None Include="shaders\trace.rgen" />
+    <None Include="shaders\wave.comp" />
+  </ItemGroup>
 </Project>

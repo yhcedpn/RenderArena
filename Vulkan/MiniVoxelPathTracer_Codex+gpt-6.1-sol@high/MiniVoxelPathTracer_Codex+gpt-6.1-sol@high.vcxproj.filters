@@ -33,4 +33,18 @@
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="scene.hpp"><Filter>头文件</Filter></ClInclude>
+    <None Include="IMPLEMENTATION.md"><Filter>资源文件</Filter></None>
+    <None Include="shaders\common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\hit.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\miss.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow_resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\svgf.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\trace.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\wave.comp"><Filter>源文件</Filter></None>
+  </ItemGroup>
 </Project>
