@@ -36,11 +36,15 @@ W_dest = weight_sum / (target_dest(selected) × Σ M_source·1[target_source(sel
 
 Acquire 使用 frame-slot binary semaphore；present semaphore 按交换链图像管理，重新 acquire 对应图像后才复用。稳态没有 device/queue idle，没有每反弹 CPU readback。帧资源等待用短 timeline timeout 继续处理 GLFW 输入。resize 和退出允许安全等待；cut/extent 重建同步清空所有历史。初始化临时资源带作用域回收；退出排空后逆序释放，并将退出期间 validation/释放失败计为失败。
 
+按更新后的题面，仅 Debug（未定义 NDEBUG）请求 VK_LAYER_KHRONOS_validation、core/synchronization validation 和 debug utils messenger；Release 不请求校验层及 debug utils 扩展，也不创建 messenger。标题栏以 steady_clock 的正常帧循环墙钟时间与成功 present 帧数统计平均 FPS 和 ms/frame，约每 0.5 秒更新；时间包含资源等待，不是 GPU pass 独立计时。初始化、最小化和交换链重建不计入统计，暂停或重建后清空旧样本并显示占位符。
+
 ## 实际核验
 
 - Windows Debug 与 Release 按原 preset 配置、构建；最终两套构建均无 warning/error。
-- Radeon 780M 实际通过 Vulkan 1.4/RT/Descriptor Buffer/Shader Object 必需能力查询；9 个 GLSL 文件运行时编译成功。开启 core 和 synchronization validation，最终运行及正常关闭无 warning/error；INFO 原样记录。
-- spatial 半径修复后，按 shader 中的整数圆盘表穷举核验全部 196 个偏移：唯一、非零、完整覆盖 x²+y²≤64 的整数圆盘，最大平方半径为 64。Release 重新构建通过；9 个 GLSL stage 运行时编译通过，实际渲染和正常关闭退出 0，core/synchronization validation 无 warning/error，日志为 out/spatial-radius-run.log。四次选择采用无放回编号映射；未改变越界及表面兼容性拒绝规则。删除了未使用的 shaders/.gitkeep。
+- 本次 Debug/Release 校验策略和标题栏修改后，两套 Windows preset 重新配置、构建通过，无编译诊断。实际 Debug 加载一个 Khronos validation 模块，INFO 列出启用 Synchronization 等 core 检查；Release 加载零个 validation 模块，stderr 为空，Release 可执行文件中也不存在校验层名称字面量。两种模式均正常关闭并退出 0，9 个 GLSL stage 运行时编译通过。
+- 两种模式均实测标题栏 FPS/ms 数值持续更新，窗口缩放后重新统计，最小化期间保持占位符，恢复后重新显示数值。运行日志为 out/title-validation-debug.stdout.log、out/title-validation-debug.stderr.log、out/title-validation-release.stdout.log 和 out/title-validation-release-exit.stdout.log；标题栏采样为 out/title-validation-debug-titles.json 与 out/title-validation-release-titles.json。
+- Radeon 780M 实际通过 Vulkan 1.4/RT/Descriptor Buffer/Shader Object 必需能力查询；9 个 GLSL 文件运行时编译成功。调整构建模式前的运行开启 core 和 synchronization validation，最终运行及正常关闭无 warning/error；INFO 原样记录。
+- spatial 半径修复后，按 shader 中的整数圆盘表穷举核验全部 196 个偏移：唯一、非零、完整覆盖 x²+y²≤64 的整数圆盘，最大平方半径为 64。当时 Release 仍开启校验层，重新构建通过；9 个 GLSL stage 运行时编译通过，实际渲染和正常关闭退出 0，core/synchronization validation 无 warning/error，日志为 out/spatial-radius-run.log。四次选择采用无放回编号映射；未改变越界及表面兼容性拒绝规则。删除了未使用的 shaders/.gitkeep。
 - 实际执行进入展厅、横向移动、镜中内容观察、玻璃前静止/移动、进入玻璃、离开玻璃、resize、高 DPI framebuffer、最小化恢复、R、右键捕获/Esc 释放及正常关闭。
 - 介质内实测相机位置 (8,1.744,8.430)，图像显示介质内折射/TIR；R 后恢复初始位置。静态镜面/玻璃 GPU 核查中 domain 0/1/2/3 的 history length 均达到 32，历史和输出 NaN=0。
 - 曾发现零贡献 NEE 的 0/0 MIS 污染历史，已在零目标数学边界修复。非 RT SPIR-V 残留 AS 类型及 fragment NonWritable 声明的验证错误也已修复。
