@@ -4,3 +4,5 @@
   * [CachedCubePipelines](OpenGL-BenchmarkTasks/CachedCubePipelines)
   * [ProceduralDeferredRenderer](OpenGL-BenchmarkTasks/ProceduralDeferredRenderer)
   * [VoxelPBRFrustumCulling](OpenGL-BenchmarkTasks/VoxelPBRFrustumCulling)
+* [Vulkan 图形编程任务](Vulkan-BenchmarkTasks)
+  * [MiniVoxelPathTracer](Vulkan-BenchmarkTasks/MiniVoxelPathTracer)
