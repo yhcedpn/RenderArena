@@ -1,0 +1,35 @@
+#version 460
+
+#include "globals.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 10) readonly buffer ShadowTasksBuffer {
+    ShadowTask items[];
+} shadowTasks;
+layout(std430, set = 0, binding = 11) readonly buffer ShadowResultsBuffer {
+    uint items[];
+} shadowResults;
+layout(std430, set = 0, binding = 12) buffer SlotRadianceBuffer {
+    vec4 items[];
+} slotRadiance;
+layout(std430, set = 0, binding = 13) readonly buffer CountsBuffer {
+    Counts c;
+} counts;
+
+uint flatIndex() {
+    uint row = gl_WorkGroupID.y + gl_WorkGroupID.z * gl_NumWorkGroups.y;
+    return row * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
+}
+
+void main() {
+    uint index = flatIndex();
+    if (index >= counts.c.shadowCount) {
+        return;
+    }
+    if (shadowResults.items[index] == 0u) {
+        return;
+    }
+    ShadowTask task = shadowTasks.items[index];
+    slotRadiance.items[task.meta.x] += vec4(task.weight.xyz, 0.0);
+}

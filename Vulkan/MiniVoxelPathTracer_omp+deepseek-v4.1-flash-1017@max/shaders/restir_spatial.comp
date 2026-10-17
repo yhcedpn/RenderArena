@@ -1,0 +1,156 @@
+#version 460
+
+#include "scene.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryInfoBuffer {
+    PrimaryInfo items[];
+} primaryInfos;
+layout(std430, set = 0, binding = 11) readonly buffer TemporalBuffer {
+    Reservoir items[];
+} temporal;
+layout(std430, set = 0, binding = 12) writeonly buffer HistoryBuffer {
+    Reservoir items[];
+} history;
+
+uint flatIndex() {
+    uint row = gl_WorkGroupID.y + gl_WorkGroupID.z * gl_NumWorkGroups.y;
+    return row * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
+}
+
+bool sourceValid(Reservoir r) {
+    return r.selected.y > 0u && r.weights.z > 0.0 && r.weights.w > 0.0;
+}
+
+struct Accumulator {
+    uint totalM;
+    float wSum;
+    bool have;
+    uint chosenTri;
+    vec2 chosenBary;
+    float chosenTarget;
+    uint chosenSource;
+};
+
+void addSource(Reservoir r, float a, uint sourceIndex, inout uint rng, inout Accumulator acc) {
+    if (!(a > 0.0)) {
+        return;
+    }
+    acc.wSum += a;
+    acc.totalM += r.selected.y;
+    if (rand01(rng) * acc.wSum < a) {
+        acc.have = true;
+        acc.chosenTri = r.selected.x;
+        acc.chosenBary = r.weights.xy;
+        acc.chosenSource = sourceIndex;
+    }
+}
+
+void main() {
+    uint index = flatIndex();
+    uint W = pc.width;
+    uint H = pc.height;
+    uint N = W * H;
+    if (index >= N) {
+        return;
+    }
+    PrimaryInfo info = primaryInfos.items[pc.slot * N + index];
+    Reservoir empty;
+    empty.selected = uvec4(0u);
+    empty.weights = vec4(0.0);
+    if (info.pos.w < 0.5) {
+        history.items[pc.slot * N + index] = empty;
+        return;
+    }
+    vec3 pos = info.pos.xyz;
+    vec3 n = normalize(info.nrm.xyz);
+    vec3 albedo = info.albedo.xyz;
+    float rough = info.params.x;
+    uint mat = uint(info.params.z);
+    uint domain = uint(info.params.w);
+    uint lobe = uint(info.params.y);
+    Globals g = G();
+    vec3 wo = normalize(g.camPos.xyz - pos);
+    float viewDepth = max(dot(pos - g.camPos.xyz, g.camFwd.xyz), 0.0);
+    uint rng = hashCombine(hashCombine(index, pc.frameIndex * 0x9e3779b9u), 0xCAFEu);
+
+    Accumulator acc;
+    acc.totalM = 0u;
+    acc.wSum = 0.0;
+    acc.have = false;
+    acc.chosenTri = 0u;
+    acc.chosenBary = vec2(0.0);
+    acc.chosenTarget = 0.0;
+    acc.chosenSource = 0u;
+
+    // 自身 temporal reservoir。
+    {
+        Reservoir selfRes = temporal.items[index];
+        if (sourceValid(selfRes)) {
+            float m = float(selfRes.selected.y);
+            if (m > 32.0) {
+                selfRes.weights.z *= 32.0 / m;
+                selfRes.selected.y = 32u;
+            }
+            float a = reservoirTargetLum(pos, n, wo, mat, albedo, rough, selfRes.selected.x,
+                                         selfRes.weights.xy) *
+                      selfRes.weights.z / max(selfRes.weights.w, 1e-12);
+            addSource(selfRes, a, 0u, rng, acc);
+        }
+    }
+
+    // 4 个随像素/帧变化的邻居，半径 <= 8。
+    uint pixelX = index % W;
+    uint pixelY = index / W;
+    for (int k = 0; k < 4; ++k) {
+        float ang = 6.28318530718 * (float(k) * 0.25 + rand01(rng));
+        float rad = 1.0 + 7.0 * rand01(rng);
+        ivec2 off = ivec2(round(vec2(cos(ang), sin(ang)) * rad));
+        if (off.x == 0 && off.y == 0) {
+            continue;
+        }
+        ivec2 np = ivec2(int(pixelX), int(pixelY)) + off;
+        if (np.x < 0 || np.x >= int(W) || np.y < 0 || np.y >= int(H)) {
+            continue;
+        }
+        uint nidx = uint(np.y) * W + uint(np.x);
+        PrimaryInfo npInfo = primaryInfos.items[pc.slot * N + nidx];
+        if (npInfo.pos.w < 0.5) {
+            continue;
+        }
+        if (uint(npInfo.params.y) != lobe || uint(npInfo.params.z) != mat ||
+            uint(npInfo.params.w) != domain) {
+            continue;
+        }
+        if (dot(normalize(npInfo.nrm.xyz), n) < 0.9) {
+            continue;
+        }
+        float posTol = 0.03 + 0.01 * viewDepth + 0.01 * float(length(off));
+        if (distance(npInfo.pos.xyz, pos) > posTol) {
+            continue;
+        }
+        Reservoir nr = temporal.items[nidx];
+        if (!sourceValid(nr)) {
+            continue;
+        }
+        float m = float(nr.selected.y);
+        if (m > 32.0) {
+            nr.weights.z *= 32.0 / m;
+            nr.selected.y = 32u;
+        }
+        float a = reservoirTargetLum(pos, n, wo, mat, albedo, rough, nr.selected.x,
+                                     nr.weights.xy) *
+                  nr.weights.z / max(nr.weights.w, 1e-12);
+        addSource(nr, a, uint(k) + 1u, rng, acc);
+    }
+
+    Reservoir outRes = empty;
+    if (acc.have && acc.wSum > 0.0 && acc.totalM > 0u) {
+        float chosenTarget =
+            reservoirTargetLum(pos, n, wo, mat, albedo, rough, acc.chosenTri, acc.chosenBary);
+        outRes.selected = uvec4(acc.chosenTri, acc.totalM, 1u, 0u);
+        outRes.weights = vec4(acc.chosenBary, acc.wSum, chosenTarget);
+    }
+    history.items[pc.slot * N + index] = outRes;
+}

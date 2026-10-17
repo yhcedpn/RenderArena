@@ -32,8 +32,10 @@
     <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'==''">$(VSInstallDir)VC\vcpkg</ArenaVcpkgRoot>
     <OutDir>$(ProjectDir)out\$(ArenaPreset)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)out\$(ArenaPreset)\vs\</IntDir>
-    <NMakeBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"&#xD;&#xA;cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration)</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"&#xD;&#xA;cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --clean-first</NMakeReBuildCommandLine>
+    <NMakeBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
+cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration)</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
+cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --clean-first</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; if exist "out\$(ArenaPreset)\CMakeCache.txt" "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --target clean</NMakeCleanCommandLine>
     <NMakeOutput>$(OutDir)MiniVoxelPathTracer.exe</NMakeOutput>
     <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include;$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
@@ -54,6 +56,38 @@
     <None Include="platforms.json" />
     <None Include="vcpkg.json" />
     <None Include="vcpkg-configuration.json" />
+    <None Include="IMPLEMENTATION.md" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\globals.glsl" />
+    <None Include="shaders\scene.glsl" />
+    <None Include="shaders\primary.comp" />
+    <None Include="shaders\primary_info.comp" />
+    <None Include="shaders\shade.comp" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\build_indirect.comp" />
+    <None Include="shaders\restir_init.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\restir_shadow.comp" />
+    <None Include="shaders\svgf_temporal.comp" />
+    <None Include="shaders\svgf_atrous.comp" />
+    <None Include="shaders\composite.frag" />
+    <None Include="shaders\fullscreen.vert" />
+    <None Include="shaders\trace.rgen" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\primary.rmiss" />
+    <None Include="shaders\shadow.rmiss" />
+    <None Include="shaders\primary.rchit" />
+    <None Include="shaders\shadow.rahit" />
+    <None Include="shaders\shadow.rchit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="rae_common.hpp" />
+    <ClInclude Include="rae_scene.hpp" />
+    <ClInclude Include="rae_renderer.hpp" />
+    <ClInclude Include="rae_renderer_setup.hpp" />
+    <ClInclude Include="rae_renderer_resources.hpp" />
+    <ClInclude Include="rae_renderer_frame.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

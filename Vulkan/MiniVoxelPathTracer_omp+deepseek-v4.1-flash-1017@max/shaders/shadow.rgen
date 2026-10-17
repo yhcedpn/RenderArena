@@ -1,0 +1,41 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+#include "common.glsl"
+
+layout(set = 0, binding = 0) readonly buffer PathsBuffer {
+    Path items[];
+} paths;
+layout(set = 0, binding = 1) writeonly buffer HitsBuffer {
+    HitPayload items[];
+} hitResults;
+layout(set = 0, binding = 2) readonly buffer ShadowTasksBuffer {
+    ShadowTask items[];
+} shadowTasks;
+layout(set = 0, binding = 3) writeonly buffer ShadowResultsBuffer {
+    uint items[];
+} shadowResults;
+layout(set = 0, binding = 4) readonly buffer CountsBuffer {
+    Counts c;
+} counts;
+layout(set = 0, binding = 5) uniform accelerationStructureEXT tlas;
+
+// 与主射线共用同一 payload 大小；pos.x=1 表示未遮挡。
+layout(location = 0) rayPayloadEXT HitPayload payload;
+
+uint flatIndex() {
+    return (gl_LaunchIDEXT.z * gl_LaunchSizeEXT.y + gl_LaunchIDEXT.y) * gl_LaunchSizeEXT.x +
+           gl_LaunchIDEXT.x;
+}
+
+void main() {
+    uint index = flatIndex();
+    if (index >= counts.c.shadowCount) {
+        return;
+    }
+    ShadowTask task = shadowTasks.items[index];
+    payload.pos = vec4(1.0, 0.0, 0.0, 0.0);
+    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFFu, 1u, 1u, 1u, task.origin.xyz,
+                0.0, normalize(task.dir.xyz), task.origin.w, 0);
+    shadowResults.items[index] = payload.pos.x > 0.5 ? 1u : 0u;
+}

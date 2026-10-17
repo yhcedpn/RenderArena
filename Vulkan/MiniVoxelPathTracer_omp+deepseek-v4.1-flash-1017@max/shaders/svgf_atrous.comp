@@ -1,0 +1,149 @@
+#version 460
+
+#include "scene.glsl"
+
+layout(local_size_x = 64) in;
+
+// 每个信号槽独立时间历史；下标 = (signal * 2 + frameSlot) * N + pixel。
+layout(std430, set = 0, binding = 10) readonly buffer TemporalColorBuffer {
+    vec4 items[];
+} temporalColor;
+layout(std430, set = 0, binding = 11) readonly buffer TemporalMomentsBuffer {
+    vec4 items[]; // x variance
+} temporalMoments;
+// 每个信号槽两个 ping-pong 块；下标 = (signal * 2 + block) * N + pixel。
+layout(std430, set = 0, binding = 12) buffer SpatialColorBuffer {
+    vec4 items[];
+} spatialColor;
+layout(std430, set = 0, binding = 13) buffer SpatialMomentsBuffer {
+    vec4 items[];
+} spatialMoments;
+layout(std430, set = 0, binding = 14) readonly buffer SlotGuidesBuffer {
+    Guide items[];
+} slotGuides;
+
+uint flatIndex() {
+    uint row = gl_WorkGroupID.y + gl_WorkGroupID.z * gl_NumWorkGroups.y;
+    return row * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
+}
+
+bool guideMatches(Guide a, Guide b, float posTol) {
+    if (!guideValid(a.meta.z) || !guideValid(b.meta.z)) {
+        return false;
+    }
+    if (a.meta.x != b.meta.x || a.meta.y != b.meta.y) {
+        return false;
+    }
+    uint fa = a.meta.z;
+    uint fb = b.meta.z;
+    if (guideLobe(fa) != guideLobe(fb) || guideMotion(fa) != guideMotion(fb) ||
+        guideChain(fa) != guideChain(fb) || guideDomain(fa) != guideDomain(fb) ||
+        guideMaterial(fa) != guideMaterial(fb) ||
+        guideChainLength(fa) != guideChainLength(fb)) {
+        return false;
+    }
+    if (distance(a.posRough.xyz, b.posRough.xyz) > posTol) {
+        return false;
+    }
+    return true;
+}
+
+// 标准 5x5 à-trous 核：一维 [1,4,6,4,1]/16，二维取可分离乘积。
+float kernelWeight(int d) {
+    int a = abs(d);
+    if (a == 0) return 6.0 / 16.0;
+    if (a == 1) return 4.0 / 16.0;
+    if (a == 2) return 1.0 / 16.0;
+    return 0.0;
+}
+
+void main() {
+    uint index = flatIndex();
+    uint W = pc.width;
+    uint H = pc.height;
+    uint N = W * H;
+    uint total = N * kSlotsPerPixel;
+    if (index >= total) {
+        return;
+    }
+    uint signal = index / N;
+    uint pixel = index % N;
+    uint slotIndex = signal * N + pixel;
+    uint x = pixel % W;
+    uint y = pixel / W;
+    uint frameSlot = pc.slot;
+    uint iteration = pc.flags;
+    uint srcBlock = 0u;
+    uint dstBlock = iteration & 1u;
+    bool fromTemporal = iteration == 0u;
+    if (!fromTemporal) {
+        // iter1 读 A，iter2 读 B，iter3 读 A，iter4 读 B。
+        srcBlock = ((iteration & 1u) != 0u) ? 0u : 1u;
+    }
+    Guide centerGuide = slotGuides.items[frameSlot * (3u * N) + slotIndex];
+    vec4 centerColor = fromTemporal
+                           ? temporalColor.items[(signal * 2u + frameSlot) * N + pixel]
+                           : spatialColor.items[(signal * 2u + srcBlock) * N + pixel];
+    vec4 centerMoments = fromTemporal
+                             ? temporalMoments.items[(signal * 2u + frameSlot) * N + pixel]
+                             : spatialMoments.items[(signal * 2u + srcBlock) * N + pixel];
+    if (!guideValid(centerGuide.meta.z) || !(centerMoments.x >= 0.0)) {
+        spatialColor.items[(signal * 2u + dstBlock) * N + pixel] = centerColor;
+        spatialMoments.items[(signal * 2u + dstBlock) * N + pixel] = centerMoments;
+        return;
+    }
+    Globals g = G();
+    float viewDepth = max(dot(centerGuide.posRough.xyz - g.camPos.xyz, g.camFwd.xyz), 0.0);
+    int step = int(pc.step);
+    float posTol = 0.03 + 0.01 * viewDepth + 0.01 * float(step);
+    float sigmaLum = 4.0 * sqrt(max(centerMoments.x, 1e-8)) + 0.01;
+    float centerLum = luminance3(centerColor.rgb);
+    float sumW = 0.0;
+    vec3 sumColor = vec3(0.0);
+    float sumVar = 0.0;
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            int nx = int(x) + dx * step;
+            int ny = int(y) + dy * step;
+            if (nx < 0 || nx >= int(W) || ny < 0 || ny >= int(H)) {
+                continue;
+            }
+            uint nidx = uint(ny) * W + uint(nx);
+            uint nslot = signal * N + nidx;
+            Guide ng = slotGuides.items[frameSlot * (3u * N) + nslot];
+            if (!guideMatches(ng, centerGuide, posTol)) {
+                continue;
+            }
+            float wKernel = kernelWeight(dx) * kernelWeight(dy);
+            float wPos =
+                exp(-distance(ng.posRough.xyz, centerGuide.posRough.xyz) / max(posTol, 1e-5));
+            float nDot = max(dot(normalize(ng.nrm.xyz), normalize(centerGuide.nrm.xyz)), 0.0);
+            float wNormal = exp(-(1.0 - nDot) * 8.0);
+            float wRough = exp(-abs(ng.posRough.w - centerGuide.posRough.w) / 0.1);
+            vec4 neighborColor = fromTemporal
+                                     ? temporalColor.items[(signal * 2u + frameSlot) * N + nidx]
+                                     : spatialColor.items[(signal * 2u + srcBlock) * N + nidx];
+            float lumDiff = abs(luminance3(neighborColor.rgb) - centerLum);
+            float wLum = exp(-lumDiff / sigmaLum);
+            float w = wKernel * wPos * wNormal * wRough * wLum;
+            if (!(w > 0.0)) {
+                continue;
+            }
+            vec4 neighborMoments =
+                fromTemporal ? temporalMoments.items[(signal * 2u + frameSlot) * N + nidx]
+                             : spatialMoments.items[(signal * 2u + srcBlock) * N + nidx];
+            float varN = max(neighborMoments.x, 0.0);
+            sumW += w;
+            sumColor += w * neighborColor.rgb;
+            sumVar += w * w * varN;
+        }
+    }
+    uint dst = (signal * 2u + dstBlock) * N + pixel;
+    if (sumW > 1e-8) {
+        spatialColor.items[dst] = vec4(sumColor / sumW, 1.0);
+        spatialMoments.items[dst] = vec4(sumVar / (sumW * sumW), 0.0, 0.0, 0.0);
+    } else {
+        spatialColor.items[dst] = centerColor;
+        spatialMoments.items[dst] = centerMoments;
+    }
+}

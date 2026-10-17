@@ -1,0 +1,404 @@
+#version 460
+
+#include "scene.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 10) buffer PathsBuffer {
+    Path items[];
+} paths;
+layout(std430, set = 0, binding = 11) buffer CountsBuffer {
+    Counts c;
+} counts;
+layout(std430, set = 0, binding = 12) readonly buffer HitsBuffer {
+    HitPayload items[];
+} hitResults;
+layout(std430, set = 0, binding = 13) buffer ShadowTasksBuffer {
+    ShadowTask items[];
+} shadowTasks;
+layout(std430, set = 0, binding = 14) buffer SlotRadianceBuffer {
+    vec4 items[];
+} slotRadiance;
+layout(std430, set = 0, binding = 15) buffer SlotGuidesBuffer {
+    Guide items[];
+} slotGuides;
+layout(std430, set = 0, binding = 16) buffer SlotTagsBuffer {
+    uint items[];
+} slotTags;
+layout(std430, set = 0, binding = 17) buffer EmissionBuffer {
+    vec4 items[];
+} emission;
+
+uint flatIndex() {
+    uint row = gl_WorkGroupID.y + gl_WorkGroupID.z * gl_NumWorkGroups.y;
+    return row * (gl_NumWorkGroups.x * gl_WorkGroupSize.x) + gl_GlobalInvocationID.x;
+}
+
+void initSignalSlot(uint slot, uint pixel, uint N) {
+    uint idx = slot * N + pixel;
+    slotRadiance.items[idx] = vec4(0.0);
+    slotTags.items[idx] = pc.frameIndex;
+}
+
+void writeGuide(uint slot, uint pixel, uint N, vec3 pos, vec3 nrm, float rough, uint lobe,
+                uint motion, uint chainType, uint domain, uint mat, uint surfaceId,
+                uint chainHash, uint chainLength, float hitDistance, vec3 albedo) {
+    uint idx = pc.slot * (3u * N) + slot * N + pixel;
+    Guide g;
+    g.posRough = vec4(pos, rough);
+    g.nrm = vec4(nrm, hitDistance);
+    g.albedo = vec4(albedo, 1.0);
+    g.meta = uvec4(chainHash, surfaceId,
+                   guideFlags(true, lobe, motion, chainType, domain, mat, chainLength),
+                   pc.frameIndex);
+    slotGuides.items[idx] = g;
+}
+
+void appendPath(inout Path p, uint rng, uint depth, uint flags) {
+    p.meta0 = uvec4(p.meta0.x, rng, depth, flags);
+    uint idx = atomicAdd(counts.c.nextPathCount, 1u);
+    if (idx < counts.c.pathCapacity) {
+        paths.items[pc.queueNext * counts.c.pathCapacity + idx] = p;
+    } else {
+        atomicAdd(counts.c.overflowPath, 1u);
+    }
+}
+
+void appendShadowTask(vec3 origin, vec3 dir, float tmax, vec3 weight, uint slotIndex) {
+    uint idx = atomicAdd(counts.c.nextShadowCount, 1u);
+    if (idx < counts.c.shadowCapacity) {
+        ShadowTask t;
+        t.origin = vec4(origin, tmax);
+        t.dir = vec4(dir, 0.0);
+        t.weight = vec4(weight, 0.0);
+        t.meta = uvec4(slotIndex, 0u, 0u, 0u);
+        shadowTasks.items[idx] = t;
+    } else {
+        atomicAdd(counts.c.overflowShadow, 1u);
+    }
+}
+
+bool roulette(inout vec3 thr, inout uint rng, uint depth) {
+    if (depth < 4u) {
+        return true;
+    }
+    float p = clamp(max(thr.x, max(thr.y, thr.z)), 0.05, 0.95);
+    if (rand01(rng) >= p) {
+        return false;
+    }
+    thr /= p;
+    return true;
+}
+
+void main() {
+    uint index = flatIndex();
+    uint N = pc.width * pc.height;
+    if (index >= counts.c.pathCount) {
+        return;
+    }
+    uint capacity = counts.c.pathCapacity;
+    Path p = paths.items[pc.queueCur * capacity + index];
+    HitPayload h = hitResults.items[index];
+    uint pixel = p.meta0.x;
+    uint slot = p.meta1.x;
+    uint slotIndex = slot * N + pixel;
+    uint flags = p.meta0.w;
+    uint depth = p.meta0.z;
+    uint rng = p.meta0.y;
+    vec3 thr = p.throughput.xyz;
+    vec3 rayDir = normalize(p.dir.xyz);
+    float coneAngle = p.dir.w;
+    float footprint = p.prevPos.w + h.pos.w * coneAngle;
+    Globals g = G();
+
+    if (depth == 0u) {
+        emission.items[pixel] = vec4(0.0);
+    }
+    if (pathMedium(flags)) {
+        thr *= exp(-g.glassAbsorption.xyz * h.pos.w);
+    }
+    if (h.normal.w < 0.5) {
+        return;
+    }
+
+    uint inst = h.geom.x;
+    uint prim = h.geom.y;
+    uint triIndex = instanceGroups.items[inst].data.x + prim;
+    Triangle tri = triangles.items[triIndex];
+    uint mat = tri.aux.x;
+    Material m = materials.items[mat];
+    uint type = uint(m.baseColor.w);
+    vec3 gn = normalize(tri.nrm.xyz);
+    bool front = dot(rayDir, gn) < 0.0;
+    vec3 nf = front ? gn : -gn;
+    vec3 wo = -rayDir;
+    vec2 uv = faceUV(h.pos.xyz, nf);
+    float lod = computeLod(footprint, dot(nf, -rayDir));
+    vec3 albedo = sampleBase(mat, uv, lod);
+    float rough = sampleRough(mat, uv, lod);
+
+    // 主样本首个可见表面：解析 emission，或初始化主信号槽。
+    if (depth == 0u) {
+        if (type == MAT_EMISSIVE) {
+            if (front) {
+                emission.items[pixel] = vec4(thr * m.emission.xyz, 1.0);
+            }
+            return;
+        }
+        if (type != MAT_DIELECTRIC) {
+            initSignalSlot(slot, pixel, N);
+            if (type == MAT_MIRROR) {
+                flags = pathSetField(flags, PATH_CHAIN_SHIFT, 7u, CHAIN_MIRROR);
+                p.meta1.y = DOMAIN_REFLECTION;
+            } else {
+                uint lobe = type == MAT_DIFFUSE ? LOBE_DIFFUSE : LOBE_GLOSSY;
+                uint domain = type == MAT_DIFFUSE ? DOMAIN_PRIMARY_DIFFUSE : DOMAIN_PRIMARY_GLOSSY;
+                flags = pathSetField(flags, PATH_CHAIN_SHIFT, 7u, CHAIN_PRIMARY);
+                flags = pathSetFlag(flags, PATH_TERMINAL, true);
+                p.meta1.y = domain;
+                uint chainHash = hashCombine(hashCombine(uint(triIndex), lobe), 0x1001u);
+                writeGuide(slot, pixel, N, h.pos.xyz, nf, rough, lobe, MOTION_PRIMARY,
+                           CHAIN_PRIMARY, domain, mat, triIndex, chainHash, 0u, h.pos.w, albedo);
+            }
+        }
+    }
+
+    // 发光面命中。
+    if (type == MAT_EMISSIVE) {
+        float emitterWeight = 0.0;
+        if (front) {
+            uint policy = pathEmitter(flags);
+            if (policy == 0u) {
+                emitterWeight = 0.0;
+            } else if (policy == 1u) {
+                float lightPdf = lightDirPdf(triIndex, p.prevPos.xyz, rayDir, h.pos.w);
+                emitterWeight = powerHeuristic(p.throughput.w, lightPdf);
+            } else {
+                emitterWeight = 1.0;
+            }
+            if (emitterWeight > 0.0) {
+                slotRadiance.items[slotIndex] += vec4(thr * m.emission.xyz * emitterWeight, 0.0);
+            }
+        }
+        if (!pathTerminal(flags)) {
+            uint chain = pathChain(flags);
+            uint motion = (chain == CHAIN_GLASS_TRANSMISSION ||
+                           p.meta1.y == DOMAIN_TRANSMISSION)
+                              ? MOTION_TRANSMISSION
+                              : (chain == CHAIN_PRIMARY ? MOTION_PRIMARY : MOTION_REFLECTION);
+            vec3 gpos = h.pos.xyz;
+            vec3 gnrm = nf;
+            if (motion == MOTION_REFLECTION) {
+                gpos = virtualPos(h.pos.xyz, p.virtualT);
+                gnrm = virtualDir(nf, p.virtualT);
+            }
+            uint chainHash = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0xE000u);
+            writeGuide(slot, pixel, N, gpos, gnrm, 0.0, LOBE_EMISSIVE, motion, chain,
+                       p.meta1.y, mat, triIndex, chainHash, p.meta1.w, h.pos.w, vec3(1.0));
+            flags = pathSetFlag(flags, PATH_TERMINAL, true);
+        }
+        return;
+    }
+
+    // 镜面：离散理想反射。
+    if (type == MAT_MIRROR) {
+        if (depth >= 8u) {
+            return;
+        }
+        p.virtualT = reflectTransform(p.virtualT, gn, h.pos.xyz);
+        p.meta1.z = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0x1111u);
+        if (pathChain(flags) == CHAIN_PRIMARY) {
+            flags = pathSetField(flags, PATH_CHAIN_SHIFT, 7u, CHAIN_MIRROR);
+        }
+        p.meta1.w += 1u;
+        thr *= albedo;
+        vec3 newDir = reflect(rayDir, nf);
+        p.origin = vec4(h.pos.xyz + newDir * 1e-3, 0.0);
+        p.dir = vec4(newDir, coneAngle);
+        p.prevPos = vec4(h.pos.xyz, footprint);
+        p.prevNormal = vec4(nf, 0.0);
+        flags = pathSetField(flags, PATH_EMITTER_SHIFT, 3u, 2u);
+        uint newDepth = depth + 1u;
+        if (roulette(thr, rng, newDepth)) {
+            p.throughput = vec4(thr, 0.0);
+            appendPath(p, rng, newDepth, flags);
+        }
+        return;
+    }
+
+    // 厚玻璃：首次命中确定性拆分反射/透射，后续随机选择。
+    if (type == MAT_DIELECTRIC) {
+        if (depth >= 8u) {
+            return;
+        }
+        bool exiting = dot(rayDir, gn) > 0.0;
+        vec3 n = exiting ? -gn : gn;
+        float etaI = exiting ? m.params.z : 1.0;
+        float etaT = exiting ? 1.0 : m.params.z;
+        float cosI = max(-dot(rayDir, n), 0.0);
+        float F = fresnelDielectric(cosI, etaI, etaT);
+        float eta = etaI / etaT;
+        vec3 refrDir;
+        bool tir = !refractDir(rayDir, n, eta, refrDir);
+        bool first = !pathSplit(flags);
+        if (first) {
+            flags = pathSetFlag(flags, PATH_SPLIT, true);
+            initSignalSlot(1u, pixel, N);
+            if (!tir) {
+                initSignalSlot(2u, pixel, N);
+            }
+            // 反射分支。
+            {
+                Path refl = p;
+                refl.meta1.x = 1u;
+                refl.meta1.y = DOMAIN_REFLECTION;
+                uint rf = flags;
+                rf = pathSetField(rf, PATH_BRANCH_SHIFT, 3u, 1u);
+                rf = pathSetField(rf, PATH_CHAIN_SHIFT, 7u, CHAIN_GLASS_REFLECTION);
+                rf = pathSetFlag(rf, PATH_TERMINAL, false);
+                rf = pathSetField(rf, PATH_EMITTER_SHIFT, 3u, 2u);
+                refl.meta1.z = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0x2001u);
+                refl.meta1.w = p.meta1.w + 1u;
+                refl.virtualT = reflectTransform(p.virtualT, gn, h.pos.xyz);
+                vec3 rd = reflect(rayDir, n);
+                refl.dir = vec4(rd, coneAngle);
+                refl.origin = vec4(h.pos.xyz + rd * 1e-3, 0.0);
+                refl.prevPos = vec4(h.pos.xyz, footprint);
+                refl.prevNormal = vec4(nf, 0.0);
+                uint rdepth = depth + 1u;
+                uint rrng = hashCombine(rng, 0xAB01u);
+                vec3 rthr = thr * F;
+                if (roulette(rthr, rrng, rdepth)) {
+                    refl.throughput = vec4(rthr, 0.0);
+                    appendPath(refl, rrng, rdepth, rf);
+                }
+            }
+            // 透射分支。
+            if (!tir) {
+                Path tr = p;
+                tr.meta1.x = 2u;
+                tr.meta1.y = DOMAIN_TRANSMISSION;
+                uint tf = flags;
+                tf = pathSetField(tf, PATH_BRANCH_SHIFT, 3u, 2u);
+                tf = pathSetField(tf, PATH_CHAIN_SHIFT, 7u, CHAIN_GLASS_TRANSMISSION);
+                tf = pathSetFlag(tf, PATH_TERMINAL, false);
+                tf = pathSetField(tf, PATH_EMITTER_SHIFT, 3u, 2u);
+                tf = pathSetFlag(tf, PATH_MEDIUM, !exiting);
+                tr.meta1.z = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0x2002u);
+                tr.meta1.w = p.meta1.w + 1u;
+                tr.dir = vec4(refrDir, coneAngle);
+                tr.origin = vec4(h.pos.xyz + refrDir * 1e-3, 0.0);
+                tr.prevPos = vec4(h.pos.xyz, footprint);
+                tr.prevNormal = vec4(nf, 0.0);
+                uint tdepth = depth + 1u;
+                uint trng = hashCombine(rng, 0xAB02u);
+                vec3 tthr = thr * (1.0 - F) * eta * eta;
+                if (roulette(tthr, trng, tdepth)) {
+                    tr.throughput = vec4(tthr, 0.0);
+                    appendPath(tr, trng, tdepth, tf);
+                }
+            }
+            return;
+        }
+        float pR = tir ? 1.0 : clamp(F, 1e-4, 1.0);
+        bool chooseRefl = tir || (rand01(rng) < pR);
+        if (chooseRefl) {
+            thr *= tir ? 1.0 : (F / pR);
+            p.virtualT = reflectTransform(p.virtualT, gn, h.pos.xyz);
+            p.meta1.z = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0x2011u);
+            vec3 rd = reflect(rayDir, n);
+            p.dir = vec4(rd, coneAngle);
+            p.origin = vec4(h.pos.xyz + rd * 1e-3, 0.0);
+        } else {
+            thr *= (1.0 - F) * eta * eta / max(1.0 - pR, 1e-6);
+            if (!pathTerminal(flags) && pathChain(flags) == CHAIN_GLASS_REFLECTION) {
+                flags = pathSetField(flags, PATH_CHAIN_SHIFT, 7u, CHAIN_GLASS_TRANSMISSION);
+                p.meta1.y = DOMAIN_TRANSMISSION;
+            }
+            p.meta1.z = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), 0x2012u);
+            p.dir = vec4(refrDir, coneAngle);
+            p.origin = vec4(h.pos.xyz + refrDir * 1e-3, 0.0);
+            flags = pathSetFlag(flags, PATH_MEDIUM, !exiting);
+        }
+        p.meta1.w += 1u;
+        p.prevPos = vec4(h.pos.xyz, footprint);
+        p.prevNormal = vec4(nf, 0.0);
+        flags = pathSetField(flags, PATH_EMITTER_SHIFT, 3u, 2u);
+        uint newDepth = depth + 1u;
+        if (roulette(thr, rng, newDepth)) {
+            p.throughput = vec4(thr, 0.0);
+            appendPath(p, rng, newDepth, flags);
+        }
+        return;
+    }
+
+    // 非 delta 表面（diffuse / rough_metal）。
+    if (depth >= 8u) {
+        return;
+    }
+    if (!pathTerminal(flags)) {
+        uint chain = pathChain(flags);
+        uint lobe = type == MAT_DIFFUSE ? LOBE_DIFFUSE : LOBE_GLOSSY;
+        uint motion;
+        if (chain == CHAIN_PRIMARY) {
+            motion = MOTION_PRIMARY;
+        } else if (chain == CHAIN_GLASS_TRANSMISSION || p.meta1.y == DOMAIN_TRANSMISSION) {
+            motion = MOTION_TRANSMISSION;
+        } else {
+            motion = MOTION_REFLECTION;
+        }
+        vec3 gpos = h.pos.xyz;
+        vec3 gnrm = nf;
+        if (motion == MOTION_REFLECTION) {
+            gpos = virtualPos(h.pos.xyz, p.virtualT);
+            gnrm = virtualDir(nf, p.virtualT);
+        }
+        uint chainHash = hashCombine(hashCombine(p.meta1.z, uint(triIndex)), lobe);
+        writeGuide(slot, pixel, N, gpos, gnrm, rough, lobe, motion, chain, p.meta1.y, mat,
+                   triIndex, chainHash, p.meta1.w, h.pos.w, albedo);
+        flags = pathSetFlag(flags, PATH_TERMINAL, true);
+    }
+
+    // 更深顶点的 NEE + power-heuristic MIS。
+    if (depth >= 1u) {
+        LightSample ls;
+        if (sampleLight(rng, ls)) {
+            vec3 target = evalDirectTarget(mat, h.pos.xyz, nf, wo, albedo, rough, ls);
+            if (luminance3(target) > 0.0) {
+                vec3 wi = normalize(ls.pos - h.pos.xyz);
+                float dist2 = dot(ls.pos - h.pos.xyz, ls.pos - h.pos.xyz);
+                float cosL = max(dot(ls.nrm, -wi), 0.0);
+                float pdfLight = ls.pdfArea * dist2 / max(cosL, 1e-6);
+                float pdfBsdf = bsdfPdf(mat, nf, wo, wi, rough);
+                float mis = powerHeuristic(pdfLight, pdfBsdf);
+                vec3 contrib = thr * target / max(ls.pdfArea, 1e-9) * mis;
+                vec3 origin = h.pos.xyz + nf * 1e-3;
+                vec3 dir = normalize(ls.pos - origin);
+                float tmax = length(ls.pos - origin) - 1e-3;
+                if (tmax > 0.0 && luminance3(contrib) > 0.0) {
+                    appendShadowTask(origin, dir, tmax, contrib, slotIndex);
+                }
+            }
+        }
+    }
+
+    vec3 wi;
+    float pdf = 0.0;
+    vec3 weight = vec3(0.0);
+    if (!sampleBsdf(mat, nf, wo, albedo, rough, rng, wi, pdf, weight)) {
+        return;
+    }
+    thr *= weight;
+    float newCone = max(coneAngle, 0.5 * rough);
+    p.origin = vec4(h.pos.xyz + wi * 1e-3, 0.0);
+    p.dir = vec4(wi, newCone);
+    p.prevPos = vec4(h.pos.xyz, footprint);
+    p.prevNormal = vec4(nf, 0.0);
+    uint policy = (depth == 0u) ? 0u : 1u;
+    flags = pathSetField(flags, PATH_EMITTER_SHIFT, 3u, policy);
+    uint newDepth = depth + 1u;
+    if (roulette(thr, rng, newDepth)) {
+        p.throughput = vec4(thr, pdf);
+        appendPath(p, rng, newDepth, flags);
+    }
+}
