@@ -11,11 +11,10 @@
 
 ## 构建与运行入口
 
-- 使用本目录的 CMake 预设，构建命令遵循根目录通用规范；配置只查找已安装依赖。缺失依赖由组织者处理。
-- 可执行文件和运行资源位于 `bin/<预设>/`；材质自动部署到可执行文件同目录。独立 stage shader 位于 `shaders/`，入口包含 `#version 460`，构建产物为 `bin/<预设>/shaders/<相对源文件名>.spv`，保留 stage 后缀，如 `trace.rgen.spv`。包含文件使用 `.glsl`。
-- shader 构建固定调用 glslc，目标为 Vulkan 1.4 / SPIR-V 1.6；运行时加载部署的 SPIR-V。
-- 本轮 Windows 工具链：Visual Studio 2026 / MSVC 14.51.36231（v145）、CMake 4.3.1-msvc1、Vulkan SDK 1.4.357.0（glslc shaderc v2026.3）。依赖的可复现版本由 manifest baseline 锁定。Linux 使用预设中的 GCC/Ninja，实际验证版本随交付记录。
+- 在本目录执行根目录“构建与交付”规定的预设配置与构建；配置只查找已安装依赖。缺失依赖由组织者处理。
+- 程序为 `bin/<预设>/VoxelPathTracer.exe`（Windows）或 `bin/<预设>/VoxelPathTracer`（Linux）；`materials.json` 部署到程序同目录。独立 stage shader 从 `shaders/` 编译到 `bin/<预设>/shaders/<相对源文件名>.spv`，保留 stage 后缀，如 `trace.rgen.spv`。包含文件使用 `.glsl`。
+- shader 版本与目标格式见题面“版本与 API 形式”，离线编译由 CMake 调用 glslc。实际核验使用的工具版本写入 `IMPLEMENTATION.md`。
 
 ## 交付
 
-在 `IMPLEMENTATION.md` 记录题面“交付内容”要求的机制和实际证据；逐项说明未实现或未核验的要求。
+在 `IMPLEMENTATION.md` 记录题面“交付与验收 / 交付内容”要求的机制和实际证据；逐项说明未实现或未核验的要求。
