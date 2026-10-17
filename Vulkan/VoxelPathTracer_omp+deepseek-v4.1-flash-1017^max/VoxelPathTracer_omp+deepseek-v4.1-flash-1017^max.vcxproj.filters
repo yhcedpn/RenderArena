@@ -32,6 +32,14 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="VoxelPathTracer_TASK.md">
+      <Filter>资源文件</Filter>
+    </None>
+    <None Include="materials.json">
+      <Filter>资源文件</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
     <ClInclude Include="src\app.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
@@ -50,76 +58,5 @@
     <ClInclude Include="src\vk_context.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="VoxelPathTracer_TASK.md">
-      <Filter>资源文件</Filter>
-    </None>
-    <None Include="materials.json">
-      <Filter>资源文件</Filter>
-    </None>
-    <None Include="shaders\atrous.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\common.glsl">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\composite.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\display.frag">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\display.vert">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\prepare.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\resolve.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\restir_initial.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\restir_shadow.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\restir_spatial.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\restir_temporal.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\setup.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\shade.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\shadow.rgen">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\shadow_resolve.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\svgf_finalize.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\svgf_temporal.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\svgf_variance.comp">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\trace.rchit">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\trace.rgen">
-      <Filter>源文件</Filter>
-    </None>
-    <None Include="shaders\trace.rmiss">
-      <Filter>源文件</Filter>
-    </None>
   </ItemGroup>
 </Project>
