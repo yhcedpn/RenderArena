@@ -1,0 +1,47 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 20) buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+layout(std430, set = 0, binding = 21) buffer IndirectBuf {
+    uvec4 queueTrace;
+    uvec4 queueDispatch;
+    uvec4 shadowTrace;
+    uvec4 shadowDispatch;
+} indirect;
+
+layout(local_size_x = 1) in;
+
+void main() {
+    uint count = counters.pathCount[pc.queue];
+    uint rowWidth = min(count, 16384u);
+    uint rows = rowWidth == 0u ? 0u : (count + rowWidth - 1u) / rowWidth;
+    indirect.queueTrace = uvec4(rowWidth, rows, 1u, 0u);
+
+    uint groups = (count + 63u) / 64u;
+    uint gx = min(groups, 65535u);
+    uint gy = gx == 0u ? 0u : (groups + gx - 1u) / gx;
+    indirect.queueDispatch = uvec4(gx, gy, 1u, 0u);
+
+    uint scount = counters.shadowCount;
+    uint srow = min(scount, 16384u);
+    uint srows = srow == 0u ? 0u : (scount + srow - 1u) / srow;
+    indirect.shadowTrace = uvec4(srow, srows, 1u, 0u);
+
+    uint sgroups = (scount + 63u) / 64u;
+    uint sgx = min(sgroups, 65535u);
+    uint sgy = sgx == 0u ? 0u : (sgroups + sgx - 1u) / sgx;
+    indirect.shadowDispatch = uvec4(sgx, sgy, 1u, 0u);
+
+    counters.shadowTaskCount = scount;
+    counters.shadowCount = 0u;
+    // 下一轮 shade 会写入另一个队列；此处清零，避免波前计数跨反弹累积。
+    counters.pathCount[1u - pc.queue] = 0u;
+}

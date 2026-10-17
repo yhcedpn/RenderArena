@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- VS 与 CLI 调用同一预设，依赖安装和链接全部由 CMake 管理。 -->
+  <PropertyGroup>
+    <VcpkgEnabled>false</VcpkgEnabled>
+    <ArenaCMake>$(VSInstallDir)Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe</ArenaCMake>
+    <ArenaPreset Condition="'$(Configuration)'=='Debug'">windows-msvc-debug</ArenaPreset>
+    <ArenaPreset Condition="'$(Configuration)'=='Release'">windows-msvc-release</ArenaPreset>
+    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'!=''">$(VCPKG_ROOT)</ArenaVcpkgRoot>
+    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'==''">$(VSInstallDir)VC\vcpkg</ArenaVcpkgRoot>
+    <OutDir>$(ProjectDir)bin\$(ArenaPreset)\</OutDir>
+    <IntDir>$(ProjectDir)obj\$(ArenaPreset)\vs\</IntDir>
+    <NMakeBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
+cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build --preset $(ArenaPreset)</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
+cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build --preset $(ArenaPreset) --clean-first</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; if exist "obj\$(ArenaPreset)\CMakeCache.txt" "$(ArenaCMake)" --build --preset $(ArenaPreset) --target clean</NMakeCleanCommandLine>
+    <NMakeOutput>$(OutDir)$(ArenaExecutable).exe</NMakeOutput>
+    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)obj\dependencies\Windows\x64-windows\include;$(ProjectDir)obj\dependencies\Windows\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+    <NMakePreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <NMakePreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <AdditionalOptions>/std:c++20 %(AdditionalOptions)</AdditionalOptions>
+    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>

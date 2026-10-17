@@ -1,30 +1,18 @@
 # RenderArena
 
-## 项目简介
+RenderArena 用真实 C++ 图形编程任务，比较模型在渲染算法、资源管理和工程实现上的表现。每份答卷保留题面、源码与构建配置。
 
-`RenderArena` 用一组图形编程任务，测试不同模型在真实 C++/C# 图形工程场景中的表现。
+## 当前测评
 
-结果按图形 API 或技术类别组织在根目录下。每个任务目录通常包含任务定义、模型生成的工程结果以及对应的构建配置：
+当前 [解决方案](RenderArena.slnx) 仅收录 VoxelPathTracer，工具与模型为 omp + deepseek-v4.1-flash-1017^max。工程入口与实现状态见[任务概览](wiki/VoxelPathTracer.md)。
 
-- `OpenGL/`：现有的 OpenGL 编程任务（用 OpenGL 4.6 Core Profile）及不同模型的完成结果
-- `Vulkan/`：VulkanWindow、RubikCube 等 Vulkan 编程任务及不同模型的完成结果
+- [任务题面](Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/VoxelPathTracer_TASK.md)：功能、资源语义和验收标准。
+- [通用执行规范](AGENTS.md)与[任务执行规范](Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md)：测评隔离、工程入口和修改边界。
+- [构建指南](wiki/Home.md#构建)：组织者准备依赖，以及 Windows / Linux 构建与运行步骤。
+- [任务索引](wiki/Vulkan-BenchmarkTasks.md)：当前工程与历史答卷入口。
 
-## 文档（Wiki）
+## 文档维护
 
-项目文档位于 [GitHub Wiki](https://github.com/yhcedpn/RenderArena/wiki)，并由仓库 `wiki/` 目录自动同步维护。
+Wiki 源文件位于 [wiki/](wiki/Home.md)，推送到 `main` 后由 [Sync Wiki 工作流](.github/workflows/sync-wiki.yml)自动同步到 [GitHub Wiki](https://github.com/yhcedpn/RenderArena/wiki)，也可手动触发工作流。构建步骤集中在 Wiki 首页，功能要求以任务题面为准，Wiki 任务页提供概览、来源和核验记录。
 
-- [Wiki 首页](https://github.com/yhcedpn/RenderArena/wiki)：项目介绍与构建指南
-- [OpenGL 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：任务清单、Release 产物与相关评审 issue
-- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：任务清单、模型答卷与核验结果
-
-## 构建
-
-构建以 CMake 为跨平台契约：Windows 可用 VS2026（`RenderArena.slnx`）或 CMake，Linux 使用 CMake；依赖由各任务目录 `vcpkg.json` 管理。完整步骤与平台适用性见 [Wiki · 如何构建](https://github.com/yhcedpn/RenderArena/wiki#如何构建)。
-
-## 适合用来观察什么
-
-- 不同模型在简单、中等、复杂图形编程任务上的稳定性差异
-- 从“窗口初始化”到“多 pass 渲染”等复杂渲染流程时，代码组织能力如何变化
-- 面对资源生命周期、FBO、shader、输入控制时是否容易出错
-- 模型是否会编造不存在，不可用的方法，函数，参数等
-- 在严格约束下，模型是否还能产出结构清晰、可维护的代码
+旧 OpenGL、RubikCube 与 MiniVoxelPathTracer 答卷见 [历史任务索引](wiki/Home.md#历史答卷)。历史页面链接到保留答卷的固定提交。

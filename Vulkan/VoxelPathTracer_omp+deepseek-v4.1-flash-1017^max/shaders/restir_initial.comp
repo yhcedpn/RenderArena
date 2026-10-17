@@ -1,0 +1,69 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 13) buffer RestirInitBuf { Reservoir restirInit[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    PrimarySurface ps = primarySurfaces[parity * n + pixel];
+    Reservoir r;
+    r.sampleData = uvec4(0u);
+    r.stats = vec4(0.0, 4.0, 0.0, 0.0);
+
+    if (uint(ps.tag.x) != pc.frame || (uint(ps.ids.w) & 1u) == 0u) {
+        restirInit[pixel] = r;
+        return;
+    }
+    uint materialIndex = uint(ps.ids.z);
+    uint type = uint(materials[materialIndex].params.y);
+    if (type != MAT_DIFFUSE && type != MAT_ROUGH_METAL) {
+        restirInit[pixel] = r;
+        return;
+    }
+    vec3 pos = ps.posDepth.xyz;
+    vec3 normal = normalize(ps.normalRough.xyz);
+    vec3 albedo = ps.albedo.rgb;
+    float roughness = ps.normalRough.w;
+    float alpha = max(roughness * roughness, 1e-3);
+    vec3 wo = normalize(cam.position.xyz - pos);
+    uint rng = pcgHash(pixel * 747796405u ^ pc.frame * 2891336453u ^ 0x9E3779B9u);
+
+    float sum = 0.0;
+    bool have = false;
+    uint selectedLight = 0u;
+    vec2 selectedBary = vec2(0.0);
+    float selectedTarget = 0.0;
+    for (uint i = 0u; i < 4u; ++i) {
+        LightSample ls;
+        if (!sampleLight(rng, ls)) continue;
+        float bsdfPdf;
+        float cosO;
+        float cosL;
+        float dist2;
+        vec3 contrib = evaluateDirect(pos, normal, wo, materialIndex, albedo, alpha, ls, bsdfPdf,
+                                      cosO, cosL, dist2);
+        float target = luminance(contrib);
+        if (target <= 0.0) continue;
+        float pArea = ls.prob / max(ls.area, 1e-12);
+        float w = target / max(pArea, 1e-12);
+        sum += w;
+        if (rand(rng) * sum < w) {
+            selectedLight = ls.lightIndex;
+            selectedBary = ls.bary.xy;
+            selectedTarget = target;
+            have = true;
+        }
+    }
+    if (have) {
+        r.sampleData = uvec4(selectedLight, 1u, floatBitsToUint(selectedBary.x),
+                         floatBitsToUint(selectedBary.y));
+        r.stats = vec4(sum / 4.0, 4.0, selectedTarget, 0.0);
+    }
+    restirInit[pixel] = r;
+}

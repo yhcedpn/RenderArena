@@ -1,0 +1,54 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 15) readonly buffer RestirSpatialBuf { Reservoir restirSpatial[]; };
+layout(std430, set = 0, binding = 18) buffer ShadowQueueBuf { ShadowTask shadowQueue[]; };
+layout(std430, set = 0, binding = 20) buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    PrimarySurface ps = primarySurfaces[parity * n + pixel];
+    if (uint(ps.tag.x) != pc.frame || (uint(ps.ids.w) & 1u) == 0u) return;
+    Reservoir r = restirSpatial[pixel];
+    if (r.sampleData.y == 0u || r.stats.x <= 0.0) return;
+    LightSample ls;
+    if (!reconstructLightSample(r.sampleData.x,
+                                vec2(uintBitsToFloat(r.sampleData.z),
+                                     uintBitsToFloat(r.sampleData.w)), ls)) return;
+    uint materialIndex = uint(ps.ids.z);
+    vec3 pos = ps.posDepth.xyz;
+    vec3 nrm = normalize(ps.normalRough.xyz);
+    vec3 wo = normalize(cam.position.xyz - pos);
+    float alpha = max(ps.normalRough.w * ps.normalRough.w, 1e-3);
+    float bsdfPdf;
+    float cosO;
+    float cosL;
+    float dist2;
+    vec3 contrib = evaluateDirect(pos, nrm, wo, materialIndex, ps.albedo.rgb, alpha, ls, bsdfPdf,
+                                  cosO, cosL, dist2);
+    vec3 weight = contrib * (r.stats.x / max(r.stats.z, 1e-6));
+    if (luminance(weight) <= 0.0) return;
+    vec3 origin = pos + nrm * 0.002;
+    ShadowTask task;
+    task.originTmax = vec4(origin, length(ls.point - origin));
+    task.target = vec4(ls.point, 0.0);
+    task.ids = uvec4(ls.instance, ls.primitive, pixel, SHADOWKIND_RESTIR);
+    task.weight = vec4(weight, 0.0);
+    uint index = atomicAdd(counters.shadowCount, 1u);
+    if (index < 3u * n) shadowQueue[index] = task;
+    else atomicAdd(counters.overflow, 1u);
+}

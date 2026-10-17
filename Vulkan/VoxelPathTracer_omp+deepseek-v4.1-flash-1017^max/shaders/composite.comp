@@ -1,0 +1,19 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 27) readonly buffer DomainFilteredBuf { vec4 domainFiltered[]; };
+layout(std430, set = 0, binding = 32) readonly buffer AnalyticBuf { vec4 analyticEmission[]; };
+layout(std430, set = 0, binding = 35) buffer CompositeBuf { vec4 composite[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    vec3 color = analyticEmission[pixel].rgb;
+    for (uint d = 0u; d < DOMAIN_COUNT; ++d) {
+        color += domainFiltered[d * n + pixel].rgb;
+    }
+    composite[pixel] = vec4(color, 1.0);
+}

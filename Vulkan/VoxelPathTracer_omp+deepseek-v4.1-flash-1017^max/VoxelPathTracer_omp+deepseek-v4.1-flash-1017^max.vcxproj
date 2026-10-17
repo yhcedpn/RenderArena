@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{CD4FB522-99B7-4DA0-A121-AF8797509B50}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+    <RootNamespace>VoxelPathTracer</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ArenaExecutable>VoxelPathTracer</ArenaExecutable>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="..\..\cmake\RenderArena.props" />
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\app.cpp" />
+    <ClCompile Include="src\renderer.cpp" />
+    <ClCompile Include="src\renderer_frame.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClCompile Include="src\vk_context.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="VoxelPathTracer_TASK.md" />
+    <None Include="materials.json" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app.hpp" />
+    <ClInclude Include="src\math.hpp" />
+    <ClInclude Include="src\renderer.hpp" />
+    <ClInclude Include="src\scene.hpp" />
+    <ClInclude Include="src\shared.hpp" />
+    <ClInclude Include="src\vk_context.hpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

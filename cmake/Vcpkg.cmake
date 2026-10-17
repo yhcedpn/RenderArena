@@ -1,0 +1,5 @@
+# 在 project() 前加载；安装由组织者单独执行，测评配置只消费依赖。
+file(TO_CMAKE_PATH "${CMAKE_TOOLCHAIN_FILE}" CMAKE_TOOLCHAIN_FILE)
+set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "配置阶段不安装依赖" FORCE)
+set(VCPKG_INSTALLED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/obj/dependencies/${CMAKE_HOST_SYSTEM_NAME}"
+    CACHE PATH "当前答卷的依赖安装树")

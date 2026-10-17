@@ -1,48 +1,34 @@
 # RenderArena
 
-## 测评工作规范
+## 文档职责
 
-下列规范仅适用于完成测评任务时
+- 本文件规定所有图形编程测评共用的执行规则；任务目录的 `AGENTS.md` 规定该测评的工程入口和修改边界；`*_TASK.md` 定义功能、资源语义与验收标准。
+- 执行测评前，读取组织者随启动上下文提供的本文件、任务目录 `AGENTS.md` 和题面。组织者负责准备依赖、搭建工程、维护题面和 Git 操作；用户明确授权的仓库维护任务可以调整相应配置。
+- 同一道题的不同答卷保留相同题面。要求只在所属文档定义一次，通过具名章节引用；题面修订须区分规格变化与格式整理。
+- 仓库维护：整理文档时，以 `RenderArena.slnx` 确认当前答卷，以工程配置核对构建事实；构建指南维护在 [Wiki 首页](wiki/Home.md#构建)，README 保留项目入口，Wiki 任务页链接题面并记录来源与核验结果。历史答卷链接到保留它的固定提交。
+- 测评执行：下述“测评隔离”约束实现智能体；组织者按用户授权执行仓库维护，准备依赖的方法见 [Wiki 首页](wiki/Home.md#组织者准备依赖)。
 
-### 任务目录结构
+## 测评隔离
 
-- 项目文件：`<任务名>.vcxproj` / `.vcxproj.filters`、`CMakeLists.txt`、`CMakePresets.json`、`platforms.json`、`vcpkg.json`
-- 代码与资源：`main.cpp`、`shaders/`、`materials.json`、`*_TASK.md`
+- 组织者指定本轮任务目录。测评智能体的显式文件操作和 shell 工作目录仅限该目录及其子目录。
+- 可读取随题规范、题面、构建配置、资源、当前答卷源码和本轮生成物。禁止主动读取或搜索上级目录、其他答卷、`.git`、Git 历史、其他会话、既有实现说明、评审、截图和历史运行日志，或借构建产物反推其他实现。
+- 禁止联网、网页、外部资料连接器、子代理和派生会话；算法材料仅限组织者随题提供的内容。
+- 可调用已安装的编译器、CMake、shader 编译器和运行时。工具内部加载系统库、共享构建配置及已安装依赖属于构建行为，不是主动浏览任务目录外文件的入口。
+- 依赖由组织者预装。测评智能体不得安装、升级或修改依赖、工具链和系统环境；缺项时报告具体依赖或能力。
+- 已安装依赖只允许显式查阅公共头文件与使用说明；安装树只读，不浏览其源码缓存、构建记录或其他答卷内容。构建工具按需加载依赖与系统文件不受此显式查阅范围限制。
+- 本轮生成的构建日志可以用于排错；既有的 `bin/obj` 不自动成为可读材料，禁止从中查找其他实现或历史结果。配置文件中的上级路径与 include/import 仅供构建工具使用，不扩大显式读取权限。
 
-### 铁律：禁止改动项目文件（除非用户明确要求或允许）
+## 工程约定
 
-以下文件**禁止修改**（内容、参数、属性、依赖一律不动）：
+- C++ 使用 C++20 和 `.cpp/.hpp`；确需 C 时使用 C17 和 `.c/.h`，按真实语言编译。GLSL 使用对应 stage 后缀或 `.glsl`；`.inc` 仅作包含资源。
+- VS 项目项：`.cpp/.c` 为 `ClCompile`、filter“源文件”；`.hpp/.h` 为 `ClInclude`、filter“头文件”；shader/`.inc` 为 `None`、filter“源文件”；需要展示的题面与运行资源为 `None`、filter“资源文件”。规范、构建配置、依赖和平台声明保留在磁盘，不加入 VS 项目视图。
+- VS 项目委托 CMake，共用语言标准、诊断设置和预设产物。Windows 提供 `Debug|x64`、`Release|x64`；目标平台以任务目录 `platforms.json` 为准。
+- 依赖使用各答卷独立的 vcpkg manifest 和安装树；同一答卷的 Debug/Release 共用含两种配置的依赖安装树，按主机平台分开。不同答卷仅共享二进制缓存。具体路径与锁定版本以构建配置为准。
+- Git 提交、推送、PR 由组织者处理。不修改 `.gitignore` 或 Git exclude，不强制添加被忽略文件。
+- 使用简体中文。注释说明算法、约束和取舍。
 
-- 任务目录的 `.vcxproj`、`.vcxproj.filters`、`.vcxproj.user`
-- 任务目录的 `CMakeLists.txt`、`CMakePresets.json`、`platforms.json`、`vcpkg.json`
+## 构建与交付
 
-### 允许的改动
-
-新增文件是本职工作，允许新建并向 `.vcxproj` / `.vcxproj.filters` **添加对新文件的引用行**（不改其它内容）：
-
-- **源文件**：普通代码（`.cpp`→`ClCompile`、头文件→`ClInclude`）、着色器（`None` 项，filter=源文件）、Vulkan 项目里的 .inc 文件（`None` 项，filter=源文件）
-- **资源文件**：`*_TASK.md`、`materials.json` 等（`None` 项，filter=资源文件）
-
-### 编码约定
-
-- 实现优先写进 `main.cpp`；辅助代码优先用头文件；新编译单元尽量并入 `main.cpp`（避免改 CMake）
-- 既有产物中的平台专有代码属被测内容，禁止在项目文件/环境层打补丁，可移植性问题如实记录
-- 不得忽视编译器警告或提示，将它们视为错误
-
-### 构建验证（完成任务后应本地构建）
-
-进入任务目录：
-
-```bash
-# 配置（Windows / Linux 二选一）
-cmake --preset windows-msvc-debug    # 或 windows-msvc-release
-cmake --preset linux-gcc-debug       # 或 linux-gcc-release
-
-# 构建
-cmake --build out/windows-msvc-debug --config Debug
-cmake --build out/linux-gcc-debug
-```
-
-- 依赖由 `vcpkg.json` 自动安装（manifest 模式）
-- 也可用 VS 打开 `RenderArena.slnx` 构建，配置只能是 `Debug|x64` / `Release|x64`
-- `platforms.json` 声明平台：`{"build_platforms": ["windows","linux"]}`，缺失视为全平台；仅 Windows 的任务只列 `windows`，CI 据此跳过 Linux 构建
+- 使用任务目录的预设配置并构建实际运行平台的 Debug 和 Release：Windows 为 `windows-msvc-debug/release`，Linux 为 `linux-gcc-debug/release`；分别执行 `cmake --preset <预设>` 和 `cmake --build --preset <预设>`。
+- 编译器、shader 编译器和运行校验的 warning/error/诊断按失败处理；正常构建进度与 Vulkan INFO 仅记录。保留诊断，不修改验收条件或加入空调用制造通过结果。
+- 交付源码和必要资源，并记录实际构建、运行平台、诊断和未完成要求。构建成功不等于算法或交互验收通过；未核验的平台和行为须明确列出。

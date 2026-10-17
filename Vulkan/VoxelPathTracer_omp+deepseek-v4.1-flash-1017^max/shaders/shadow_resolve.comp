@@ -1,0 +1,38 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 11) buffer BranchContribBuf { vec4 branchContrib[]; };
+layout(std430, set = 0, binding = 17) buffer RestirOutBuf { vec4 restirOut[]; };
+layout(std430, set = 0, binding = 18) readonly buffer ShadowQueueBuf { ShadowTask shadowQueue[]; };
+layout(std430, set = 0, binding = 19) readonly buffer ShadowResultsBuf { uvec4 shadowResults[]; };
+layout(std430, set = 0, binding = 20) readonly buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+layout(std430, set = 0, binding = 21) readonly buffer IndirectBuf {
+    uvec4 queueTrace;
+    uvec4 queueDispatch;
+    uvec4 shadowTrace;
+    uvec4 shadowDispatch;
+} indirect;
+
+layout(local_size_x = 64) in;
+
+void main() {
+    uint gx = indirect.shadowDispatch.x;
+    if (gx == 0u) return;
+    uint index = (gl_WorkGroupID.y * gx + gl_WorkGroupID.x) * 64u + gl_LocalInvocationIndex;
+    if (index >= counters.shadowTaskCount) return;
+    ShadowTask task = shadowQueue[index];
+    if (shadowResults[index].x == 0u) return;
+    if (task.ids.w == SHADOWKIND_BRANCH) {
+        branchContrib[task.ids.z].xyz += task.weight.xyz;
+    } else {
+        restirOut[task.ids.z].xyz += task.weight.xyz;
+    }
+}

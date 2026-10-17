@@ -1,0 +1,100 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 22) readonly buffer DomainRadianceBuf { vec4 domainRadiance[]; };
+layout(std430, set = 0, binding = 23) readonly buffer DomainGuideBuf { Guide domainGuide[]; };
+layout(std430, set = 0, binding = 24) buffer DomainM1Buf { vec4 domainM1[]; };
+layout(std430, set = 0, binding = 25) buffer DomainM2Buf { vec4 domainM2[]; };
+layout(std430, set = 0, binding = 26) buffer DomainHistBuf { uint domainHist[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    uint d = pc.domainIndex;
+    uint currentIndex = (parity * DOMAIN_COUNT + d) * n + pixel;
+    Guide g = domainGuide[(parity * DOMAIN_COUNT + d) * n + pixel];
+    vec3 sampleColor = domainRadiance[d * n + pixel].rgb;
+    vec3 albedo = vec3(1.0);
+    if (d < 2u) {
+        PrimarySurface ps = primarySurfaces[parity * n + pixel];
+        if (uint(ps.tag.x) == pc.frame) albedo = ps.albedo.rgb;
+    }
+    vec3 dem = vec3(albedo.x > 1e-4 ? sampleColor.x / albedo.x : 0.0,
+                    albedo.y > 1e-4 ? sampleColor.y / albedo.y : 0.0,
+                    albedo.z > 1e-4 ? sampleColor.z / albedo.z : 0.0);
+
+    vec3 m1 = dem;
+    vec3 m2 = dem * dem;
+    uint historyLength = 0u;
+
+    bool hasCurrent = g.frameTag == pc.frame;
+    bool guideValid = hasCurrent && (g.materialFlags >> 16 & 1u) != 0u;
+    if (hasCurrent && guideValid && cam.flags.y < 0.5) {
+        vec3 pos;
+        float depth;
+        vec3 normal;
+        float roughness;
+        uint material;
+        uint flags;
+        unpackGuide(g, pos, depth, normal, roughness, material, flags);
+        bool opticalDomain = d >= 2u;
+        bool transmission = d == DOMAIN_GLASS_TRANSMIT;
+        bool cameraStill = cam.flags.x < 0.5;
+        if (!(transmission && !cameraStill)) {
+            vec2 uvPrev = reprojectUV(pos, pixel, pc.frame);
+            if (all(greaterThanEqual(uvPrev, vec2(0.0))) &&
+                all(lessThanEqual(uvPrev, vec2(1.0)))) {
+                ivec2 prevCoord = ivec2(floor(uvPrev * cam.extent.xy));
+                prevCoord = clamp(prevCoord, ivec2(0), ivec2(int(cam.extent.x) - 1,
+                                                            int(cam.extent.y) - 1));
+                uint prevPixel = uint(prevCoord.y) * pc.width + uint(prevCoord.x);
+                Guide prev = domainGuide[((parity ^ 1u) * DOMAIN_COUNT + d) * n + prevPixel];
+                if (prev.frameTag == pc.frame - 1u && (prev.materialFlags >> 16 & 1u) != 0u) {
+                    vec3 prevPos;
+                    float prevDepth;
+                    vec3 prevNormal;
+                    float prevRough;
+                    uint prevMaterial;
+                    uint prevFlags;
+                    unpackGuide(prev, prevPos, prevDepth, prevNormal, prevRough, prevMaterial,
+                                prevFlags);
+                    float depthTol = 0.02 * max(abs(depth), abs(prevDepth)) + 0.02;
+                    bool compatible = prevMaterial == material &&
+                                      abs(prevDepth - depth) < depthTol &&
+                                      dot(normal, prevNormal) > 0.9 &&
+                                      length(prevPos - pos) < 0.05 + 0.01 * abs(depth);
+                    if (opticalDomain) {
+                        compatible = compatible && prev.chainHash == g.chainHash &&
+                                     prev.terminalId == g.terminalId;
+                    }
+                    if (compatible) {
+                        uint previousIndex =
+                            ((parity ^ 1u) * DOMAIN_COUNT + d) * n + prevPixel;
+                        vec4 prevM1 = domainM1[previousIndex];
+                        vec4 prevM2 = domainM2[previousIndex];
+                        uint prevLen = domainHist[previousIndex];
+                        if (prevLen > 0u) {
+                            historyLength = min(prevLen + 1u, 32u);
+                            float alpha = 1.0 / float(historyLength);
+                            m1 = mix(prevM1.rgb, dem, alpha);
+                            m2 = mix(prevM2.rgb, dem * dem, alpha);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (historyLength == 0u) {
+        m1 = dem;
+        m2 = dem * dem;
+        historyLength = 1u;
+    }
+    domainM1[currentIndex] = vec4(m1, 0.0);
+    domainM2[currentIndex] = vec4(m2, 0.0);
+    domainHist[currentIndex] = historyLength;
+}

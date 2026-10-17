@@ -1,0 +1,48 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 18) readonly buffer ShadowQueueBuf { ShadowTask shadowQueue[]; };
+layout(std430, set = 0, binding = 20) readonly buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+layout(std430, set = 0, binding = 21) readonly buffer IndirectBuf {
+    uvec4 queueTrace;
+    uvec4 queueDispatch;
+    uvec4 shadowTrace;
+    uvec4 shadowDispatch;
+} indirect;
+layout(set = 0, binding = 34) uniform accelerationStructureEXT tlas;
+
+struct Payload {
+    uint slot;
+    uint shadow;
+};
+layout(location = 0) rayPayloadEXT Payload payload;
+
+void main() {
+    uint rowWidth = indirect.shadowTrace.x;
+    if (rowWidth == 0u) return;
+    uint slot = gl_LaunchIDEXT.y * rowWidth + gl_LaunchIDEXT.x;
+    if (slot >= counters.shadowTaskCount) return;
+    ShadowTask task = shadowQueue[slot];
+    vec3 delta = task.target.xyz - task.originTmax.xyz;
+    float distance = length(delta);
+    if (distance <= 1e-6) {
+        // 退化情况下由 miss 处理；仍需发起一次零长度求交之外的决定。
+        payload.slot = slot;
+        payload.shadow = 1u;
+        return;
+    }
+    vec3 dir = delta / distance;
+    payload.slot = slot;
+    payload.shadow = 1u;
+    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                0u, 0u, 0u, task.originTmax.xyz, 1e-4, dir, distance + 1e-3, 0);
+}

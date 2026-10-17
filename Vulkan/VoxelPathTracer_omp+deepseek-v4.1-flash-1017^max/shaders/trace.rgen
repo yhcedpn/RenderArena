@@ -1,0 +1,51 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 7) readonly buffer PathsABuf { Path pathsA[]; };
+layout(std430, set = 0, binding = 8) readonly buffer PathsBBuf { Path pathsB[]; };
+layout(std430, set = 0, binding = 20) readonly buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+layout(std430, set = 0, binding = 21) readonly buffer IndirectBuf {
+    uvec4 queueTrace;
+    uvec4 queueDispatch;
+    uvec4 shadowTrace;
+    uvec4 shadowDispatch;
+} indirect;
+layout(set = 0, binding = 34) uniform accelerationStructureEXT tlas;
+
+struct Payload {
+    uint slot;
+    uint shadow;
+};
+layout(location = 0) rayPayloadEXT Payload payload;
+
+void main() {
+    uint slot = 0u;
+    uint count = 0u;
+    if ((pc.flags & 1u) != 0u) {
+        // 主射线直接 dispatch：按 W x H 二维映射。
+        slot = gl_LaunchIDEXT.y * pc.width + gl_LaunchIDEXT.x;
+        count = pc.width * pc.height;
+    } else {
+        uint rowWidth = indirect.queueTrace.x;
+        if (rowWidth == 0u) return;
+        slot = gl_LaunchIDEXT.y * rowWidth + gl_LaunchIDEXT.x;
+        count = counters.pathCount[pc.queue];
+    }
+    if (slot >= count) return;
+
+    Path p = pc.queue == 0u ? pathsA[slot] : pathsB[slot];
+    payload.slot = slot;
+    payload.shadow = 0u;
+
+    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xFFu, 0u, 0u, 0u,
+                p.originTmin.xyz, p.originTmin.w, p.dirTmax.xyz, p.dirTmax.w, 0);
+}

@@ -1,0 +1,17 @@
+# 所有入口共用语言标准、产物目录与编译诊断设置。
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)
+set(ARENA_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bin/${ARENA_PRESET_NAME}")
+# 生成器表达式阻止 VS 多配置生成器额外追加 Debug/Release 子目录。
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${ARENA_RUNTIME_DIR}/$<0:>")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${ARENA_RUNTIME_DIR}/$<0:>")
+if(MSVC)
+    add_compile_options(/WX /utf-8)
+else()
+    add_compile_options(-Werror)
+endif()
