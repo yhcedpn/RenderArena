@@ -1,63 +1,75 @@
 # RenderArena Wiki
 
-`RenderArena` 通过真实 C++ 图形编程任务，比较不同模型在窗口初始化、渲染流程、资源管理和复杂图形算法上的实现能力。每份答卷保留任务定义、源码和构建配置，任务页提供规格、答卷来源与评审记录。
+RenderArena 的项目介绍与当前测评状态见 [README](https://github.com/yhcedpn/RenderArena/blob/main/README.md)。本页提供构建步骤和任务导航。
 
-- [OpenGL 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：PBR 与视锥剔除。
-- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：配置驱动 PBR 与硬件路径追踪。
+## 当前任务
 
-## 如何构建
+[VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer)：Vulkan 1.4 体素展厅，要求硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF 和镜面/玻璃分域历史。实现状态与题面入口见任务页。
 
-构建配置仅支持 `Debug|x64` 与 `Release|x64`。
+## 构建
 
-### 方法 1：Windows + Visual Studio
+### 组织者准备依赖
 
-在 Windows 11 系统运行，安装 Windows SDK；GPU 和驱动需满足所选题目的 OpenGL 或 Vulkan 版本与特性要求。
+1. Windows 安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载、MSVC v145 和 Windows SDK；CMake 需支持 `Visual Studio 18 2026` 生成器。Linux 安装 CMake ≥ 3.28、Ninja 和 GCC。
+2. 设置 `VCPKG_ROOT` 指向已安装的 vcpkg。提供 Vulkan SDK 的 `glslc`，可通过 `PATH` 或 `VULKAN_SDK` 定位。运行渲染器所需设备能力与校验层要求见[题面](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/VoxelPathTracer_TASK.md)。
+3. 从仓库根目录执行依赖准备脚本：
 
-1. 安装 Visual Studio 2026，确保安装 `使用 C++ 的桌面开发` 模块。
-2. 安装 MSVC v145 和 VS 自带的 vcpkg，或设置 `VCPKG_ROOT` 指向独立的 vcpkg。
-3. 克隆本仓库，打开 `RenderArena.slnx`，构建并运行你想测试的项目，只可选择 `Debug|x64` 或 `Release|x64` 构建配置。
+```powershell
+cmake "-DARENA_TASK_DIR=Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max" -P cmake/PrepareDependencies.cmake
+```
 
-全部 VS 项目调用任务目录的 CMake 预设，与命令行共用依赖、编译、链接及资源复制规则。使用 `VCPKG_ROOT` 指定的 vcpkg；未设置时使用 VS 自带的 vcpkg。VS 调试器从对应 `bin/<预设>/` 启动程序。无需另外执行 vcpkg 的 MSBuild 全局集成。CMake 是唯一实际构建系统，`.vcxproj` 提供 VS 项目视图和启动入口。
+各答卷的 `vcpkg.json` 锁定依赖和 baseline。脚本把依赖安装到该答卷的 `obj/dependencies/<主机平台>/`，同树包含 Debug/Release；临时构建目录为仓库根 `obj/vcpkg/<项目路径哈希>/<主机平台>/`。二进制缓存使用 vcpkg 用户级共享缓存或显式设置的 `VCPKG_BINARY_SOURCES`。
 
-### 方法 2：CLI + CMake（Windows / Linux）
+依赖准备完成后，测评构建只消费已安装依赖；缺项由组织者补齐。实现智能体的操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
 
-任务通过 CMake + vcpkg 构建，适用平台以各答卷的 `platforms.json` 为准。
+### 配置与构建
 
-1. Windows 安装 Visual Studio 2026 的 C++ 开发工具及支持 `Visual Studio 18 2026` 生成器的 CMake；Linux 安装 CMake（≥ 3.28）、Ninja 与 GCC。
-2. 设置环境变量 `VCPKG_ROOT` 指向本机 vcpkg 目录。
-3. 进入任务目录（如 `OpenGL/VoxelPBRFrustumCulling_Codex+gpt-5.6-terra@max`）：
-   - Windows：`cmake --preset windows-msvc-release`，然后 `cmake --build --preset windows-msvc-release`
-   - Linux：`cmake --preset linux-gcc-release`，然后 `cmake --build --preset linux-gcc-release`
-   - Debug 对应 `windows-msvc-debug` / `linux-gcc-debug`；预设定义集中在仓库根 `CMakePresets.json`，各任务目录的 `CMakePresets.json` 引用同一份。
-4. 依赖由各任务目录 `vcpkg.json`（manifest 模式）声明，vcpkg 按 `x64-windows` / `x64-linux` triplet 自动安装；每个项目及预设各自安装依赖到 `obj/<预设>/vcpkg_installed/`，避免混用不同题目的依赖。语言标准统一为 C++20/C17，编译器警告视为错误。
-5. 运行 Release 产物：Windows 下为 `bin\windows-msvc-release\<可执行名>.exe`；Linux 下为 `./bin/linux-gcc-release/<可执行名>`。需要外部资源的任务应保留输出目录中的 `shaders/` 与 `materials.json`。
+进入任务目录：
 
-> 说明：
-> - 渲染程序需要图形环境运行。Linux 上请在带 X11 会话与 GPU 驱动（或 mesa 软件渲染）的机器上运行；运行检查在本地执行。
-> - 平台适用性由各任务目录 `platforms.json` 声明（`{"build_platforms": ["windows","linux"]}`，缺失时构建矩阵包含两平台）；两份 VoxelPBR 答卷使用 Windows 专有 API，且仅声明 `windows`，不参与 Linux 构建。平台声明不代表构建与运行验收已经通过。
+```powershell
+cd "Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max"
+```
 
-可执行文件、DLL 和运行资源统一放在 `bin/<预设>/`；CMake 生成文件、目标文件、VS 包装项目中间文件和 vcpkg 依赖统一放在 `obj/<预设>/`。Debug/Release 以及 Windows/Linux 分开，VS 与 CLI 共用同一预设的产物。`bin/obj` 已由现有 Git 忽略规则覆盖。
+Windows 分别配置并构建 Debug、Release：
 
-## 任务与文档维护
+```powershell
+cmake --preset windows-msvc-debug
+cmake --build --preset windows-msvc-debug
+cmake --preset windows-msvc-release
+cmake --build --preset windows-msvc-release
+```
 
-- [OpenGL 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)
-- [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)
+Linux 使用对应预设：
 
-新增答卷放在 `OpenGL/` 或 `Vulkan/` 的直接子目录，平台由 `platforms.json` 声明。仓库不配置 CI、自动 Wiki 同步或 Release 发布；源码、题面及配置通过 Git 维护，程序在本地构建。
+```sh
+cmake --preset linux-gcc-debug
+cmake --build --preset linux-gcc-debug
+cmake --preset linux-gcc-release
+cmake --build --preset linux-gcc-release
+```
 
-2026-10-17 已清理历史 Release 和 CI 构建附件。Wiki 源文件位于仓库 `wiki/`，更新时手动同步。
+平台适用性以任务目录 `platforms.json` 为准。预设定义见[根目录 CMakePresets.json](https://github.com/yhcedpn/RenderArena/blob/main/CMakePresets.json)，任务目录引用共享预设；语言标准和编译诊断设置见 [RenderArena.cmake](https://github.com/yhcedpn/RenderArena/blob/main/cmake/RenderArena.cmake)。
 
-## 本机构建核验（2026-10-17）
+Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`。VS 项目委托相同 CMake 预设；未设置 `VCPKG_ROOT` 时，VS 入口使用随 VS 安装的 vcpkg。依赖仍需先按上述步骤准备。
 
-Windows 11、Visual Studio 2026 / MSVC v145 下，以下六份答卷的 CMake Debug/Release 均通过；整个 `RenderArena.slnx` 的 `Debug|x64` 和 `Release|x64` 也均通过，最终构建日志无 warning/error。
+### 运行与产物
 
-| 题目 | 答卷 | Debug | Release |
-| --- | --- | --- | --- |
-| VoxelPBRFrustumCulling | Codex + gpt-5.6-terra@max | 通过 | 通过 |
-| VoxelPBRFrustumCulling | omp + gpt-5.6-luna@max | 通过 | 通过 |
-| RubikCube | Copilot + glm5.2@max | 通过 | 通过 |
-| RubikCube | omp + gpt-5.6-luna@max | 通过 | 通过 |
-| MiniVoxelPathTracer | Codex + gpt-6.1-sol@high | 通过 | 通过 |
-| MiniVoxelPathTracer | omp + deepseek-v4.1-flash-1017@max | 通过 | 通过 |
+可执行文件、DLL 和运行资源位于任务目录 `bin/<预设>/`；应用中间文件位于 `obj/<预设>/`，依赖安装树与应用配置目录分开。VS 调试器从对应产物目录启动程序。
 
-本次验证包含配置、编译、链接与运行资源部署；Linux 构建和图形交互运行未在本次执行。Debug/Release 的链接库分别来自当前项目的 vcpkg `debug/lib` 和 `lib`，不链接另一份答卷的依赖或 Vulkan SDK loader 库。Vulkan 函数由 volk 加载系统驱动。
+当前目标可执行文件为 Windows 的 `VoxelPathTracer.exe` 或 Linux 的 `VoxelPathTracer`。`materials.json` 部署到可执行文件同目录；独立 stage shader 在构建时编译到 `shaders/<相对源文件名>.spv`。部署映射见[任务执行规范](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。
+
+构建、算法和交互的完成条件分别见题面“交付与验收”。实际核验记录放在对应答卷的 `IMPLEMENTATION.md`，并注明平台、配置、诊断与未核验行为。
+
+## 历史答卷
+
+以下页面保留旧答卷的来源和核验记录；其源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。旧记录不代表当前 VoxelPathTracer 的核验结果。
+
+- [OpenGL 任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：VoxelPBRFrustumCulling。
+- [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：RubikCube、MiniVoxelPathTracer。
+
+## 文档维护
+
+- 当前工程入口以 `RenderArena.slnx` 为准；新增答卷的平台和构建配置由答卷目录声明。
+- 文档职责与同题题面维护规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。Wiki 任务页链接题面，核验记录注明日期与适用答卷。
+- Wiki 源文件位于仓库 `wiki/`。[Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)在 `main` 上的 `wiki/**` 或同步工作流文件变更时运行，也支持 `workflow_dispatch` 手动触发。同步以 `wiki/` 为准，包含删除页面；没有内容变化时跳过提交。
+- 构建与运行核验在本地执行；构建 CI 和 Release 发布工作流保持停用。

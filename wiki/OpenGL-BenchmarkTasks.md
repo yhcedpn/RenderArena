@@ -1,13 +1,9 @@
-# OpenGL 图形编程任务
+# OpenGL 图形编程任务（历史）
 
-本页介绍仓库 `OpenGL/` 目录下的 OpenGL 4.6 Core Profile 图形编程任务，以及不同模型在这些任务上的完成结果与评审。Vulkan 任务见 [Vulkan 图形编程任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)。
+以下 OpenGL 4.6 Core Profile 答卷保存在[历史提交](https://github.com/yhcedpn/RenderArena/wiki/Home#历史答卷)，已移出当前解决方案。
 
-## 任务清单
+| 题目 | 主题 | 工具与模型 |
+| --- | --- | --- |
+| [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling) | PBR、实例化与 CPU 视锥剔除 | Codex + gpt-5.6-terra@max、omp + gpt-5.6-luna@max |
 
-| 题目 | 一句话主题 |
-| --- | --- |
-| [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling) | PBR + 实例化 + 可验证的 CPU 视锥剔除 |
-
-
-
-构建步骤见 [构建指南](https://github.com/yhcedpn/RenderArena/wiki#如何构建)，支持 `Debug|x64` 与 `Release|x64`。两份 VoxelPBR 答卷使用 Windows 专有 API，`platforms.json` 仅声明 `windows`，不适用于 Linux 构建；相关评审见 [#17](https://github.com/yhcedpn/RenderArena/issues/17) 和 [#21](https://github.com/yhcedpn/RenderArena/issues/21)。
+两份答卷的 `platforms.json` 仅声明 Windows。题面、评审与构建记录见任务页；复现旧答卷时使用历史提交中的工程配置。
