@@ -1,0 +1,32 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 23) readonly buffer DomainGuideBuf { Guide domainGuide[]; };
+layout(std430, set = 0, binding = 29) readonly buffer ScratchColorBBuf { vec4 scratchColorB[]; };
+layout(std430, set = 0, binding = 27) buffer DomainFilteredBuf { vec4 domainFiltered[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    uint d = pc.domainIndex;
+    Guide g = domainGuide[(parity * DOMAIN_COUNT + d) * n + pixel];
+    vec3 outColor = vec3(0.0);
+    if (g.frameTag == pc.frame) {
+        vec3 c = scratchColorB[pixel].rgb;
+        if (d < 2u) {
+            PrimarySurface ps = primarySurfaces[parity * n + pixel];
+            vec3 albedo = (uint(ps.tag.x) == pc.frame) ? ps.albedo.rgb : vec3(1.0);
+            outColor = vec3(albedo.x > 1e-4 ? c.x * albedo.x : 0.0,
+                            albedo.y > 1e-4 ? c.y * albedo.y : 0.0,
+                            albedo.z > 1e-4 ? c.z * albedo.z : 0.0);
+        } else {
+            outColor = c;
+        }
+    }
+    domainFiltered[d * n + pixel] = vec4(outColor, 1.0);
+}

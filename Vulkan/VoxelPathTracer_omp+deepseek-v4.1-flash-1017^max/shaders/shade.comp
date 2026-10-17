@@ -1,0 +1,409 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 7) buffer PathsABuf { Path pathsA[]; };
+layout(std430, set = 0, binding = 8) buffer PathsBBuf { Path pathsB[]; };
+layout(std430, set = 0, binding = 9) readonly buffer HitsBuf { Hit hits[]; };
+layout(std430, set = 0, binding = 10) buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 11) buffer BranchContribBuf { vec4 branchContrib[]; };
+layout(std430, set = 0, binding = 12) buffer BranchInfoBuf { BranchInfo branchInfo[]; };
+layout(std430, set = 0, binding = 18) buffer ShadowQueueBuf { ShadowTask shadowQueue[]; };
+layout(std430, set = 0, binding = 20) buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+layout(std430, set = 0, binding = 21) readonly buffer IndirectBuf {
+    uvec4 queueTrace;
+    uvec4 queueDispatch;
+    uvec4 shadowTrace;
+    uvec4 shadowDispatch;
+} indirect;
+layout(std430, set = 0, binding = 32) buffer AnalyticBuf { vec4 analyticEmission[]; };
+
+layout(local_size_x = 64) in;
+
+uint gPixelCount;
+uint gParity;
+
+void writePrimaryInvalid(uint pixel, uint frameIndex) {
+    PrimarySurface ps;
+    ps.posDepth = vec4(0.0);
+    ps.normalRough = vec4(0.0, 1.0, 0.0, 1.0);
+    ps.albedo = vec4(0.0);
+    ps.uv = vec4(0.0);
+    ps.ids = vec4(0.0);
+    ps.tag = vec4(float(frameIndex), 0.0, 0.0, 0.0);
+    primarySurfaces[gParity * gPixelCount + pixel] = ps;
+}
+
+void writePrimary(uint pixel, uint frameIndex, vec3 pos, vec3 normal, float roughness, vec3 albedo,
+                  vec2 uv, uint instance, uint primitive, uint materialIndex, uint pathCls) {
+    PrimarySurface ps;
+    ps.posDepth = vec4(pos, viewDepth(pos));
+    ps.normalRough = vec4(normal, roughness);
+    ps.albedo = vec4(albedo, 1.0);
+    ps.uv = vec4(uv, 0.0, 0.0);
+    ps.ids = vec4(float(instance), float(primitive), float(materialIndex), 1.0);
+    ps.tag = vec4(float(frameIndex), float(pathCls), 0.0, 0.0);
+    primarySurfaces[gParity * gPixelCount + pixel] = ps;
+}
+
+void flushPath(Path p, uint frameIndex) {
+    uint pixel = p.ids.x;
+    uint branchId = p.ids.y & 1u;
+    uint domain = classifyDomain(p);
+    uint cls = pathClass(p);
+    Guide g;
+    uint valid = 0u;
+    uint material = 0u;
+    uint terminalId = 0u;
+    uint chainHash = 0u;
+
+    if (cls <= PATHCLASS_PRIMARY_SPECULAR) {
+        PrimarySurface ps = primarySurfaces[gParity * gPixelCount + pixel];
+        if (uint(ps.tag.x) == frameIndex && (uint(ps.ids.w) & 1u) != 0u) {
+            valid = 1u;
+            material = uint(ps.ids.z);
+            terminalId = (uint(ps.ids.x) << 16) | uint(ps.ids.y);
+            vec3 n = normalize(ps.normalRough.xyz);
+            packGuide(g, ps.posDepth.xyz, ps.posDepth.w, n, ps.normalRough.w, 0u, terminalId,
+                      material, 1u, frameIndex);
+        }
+    } else if (terminalValid(p)) {
+        vec3 pos;
+        vec3 normal;
+        float roughness;
+        uint mat;
+        uint inst;
+        uint prim;
+        decodeTerminal(p, pos, normal, roughness, mat, inst, prim);
+        bool virtualImage = (cls == PATHCLASS_MIRROR) ||
+                            ((p.ids.y & PF_HAS_TRANSMISSION) == 0u);
+        if (virtualImage) reflectThroughChain(p, pos, normal);
+        material = mat;
+        terminalId = (inst << 16) | prim;
+        chainHash = p.misc.x;
+        packGuide(g, pos, viewDepth(pos), normal, roughness, chainHash, terminalId, material, 1u,
+                  frameIndex);
+        valid = 1u;
+    }
+
+    if (valid == 0u) {
+        g.posDepth0 = 0u; g.posDepth1 = 0u;
+        g.normalRough0 = 0u; g.normalRough1 = 0u;
+        g.chainHash = 0u; g.terminalId = 0u;
+        g.materialFlags = 0u; g.frameTag = frameIndex;
+    }
+    BranchInfo bi;
+    bi.guide = g;
+    bi.domain = domain;
+    bi.frame = frameIndex;
+    bi.valid = valid;
+    bi.pad = 0u;
+    branchInfo[pixel * 2u + branchId] = bi;
+}
+
+void appendPath(bool otherQueue, Path p, uint capacity) {
+    uint index = atomicAdd(counters.pathCount[otherQueue ? 1u : 0u], 1u);
+    if (index < capacity) {
+        if (otherQueue) pathsB[index] = p; else pathsA[index] = p;
+    } else {
+        atomicAdd(counters.overflow, 1u);
+    }
+}
+
+void addNee(Path p, vec3 pos, vec3 n, vec3 wo, uint materialIndex, vec3 albedo, float alpha,
+            uint pixel, uint branchId) {
+    uint neeRng = pcgHash(p.ids.z ^ 0x68BC21EBu);
+    LightSample ls;
+    if (!sampleLight(neeRng, ls)) return;
+    float bsdfPdf;
+    float cosO;
+    float cosL;
+    float dist2;
+    vec3 contrib = evaluateDirect(pos, n, wo, materialIndex, albedo, alpha, ls, bsdfPdf, cosO,
+                                  cosL, dist2);
+    if (luminance(contrib) <= 0.0) return;
+    float pArea = ls.prob / max(ls.area, 1e-12);
+    float pLight = pArea * dist2 / max(cosL, 1e-6);
+    float mis = misWeight(bsdfPdf, pLight);
+    vec3 weight = p.throughput.rgb * contrib * (mis / pArea);
+    if (luminance(weight) <= 0.0) return;
+    vec3 dir = normalize(ls.point - pos);
+    vec3 origin = pos + n * 0.002;
+    ShadowTask task;
+    task.originTmax = vec4(origin, length(ls.point - origin));
+    task.target = vec4(ls.point, 0.0);
+    task.ids = uvec4(ls.instance, ls.primitive, pixel * 2u + branchId, SHADOWKIND_BRANCH);
+    task.weight = vec4(weight, 0.0);
+    uint index = atomicAdd(counters.shadowCount, 1u);
+    if (index < 3u * gPixelCount) shadowQueue[index] = task;
+    else atomicAdd(counters.overflow, 1u);
+}
+
+void emitHit(Path p, uint pixel, uint branchId, vec3 pos, vec3 dir, float distance,
+             uint materialIndex, uint instance, uint primitive, bool suppress) {
+    if (suppress) return;
+    Triangle tri = triangles[instances[instance].triangleOffset + primitive];
+    vec3 emission = materials[materialIndex].emission.rgb;
+    // 单面发射：只有从外侧看到发光面才计能。
+    vec3 n = normalize(tri.n.xyz);
+    if (dot(n, -normalize(dir)) <= 0.0) return;
+    bool lastDelta = (p.ids.y & PF_LAST_DELTA) != 0u;
+    float weight = 1.0;
+    if (!lastDelta) {
+        float pBsdf = uintBitsToFloat(p.misc.y);
+        uint lightIndex = tri.extra.z;
+        if (lightIndex >= uint(lights.length())) return;
+        Light light = lights[lightIndex];
+        float cosL = dot(n, -normalize(dir));
+        float dist2 = max(distance * distance, 1e-8);
+        float pArea = light.cdf.y / max(light.emissionArea.w, 1e-12);
+        float pLight = pArea * dist2 / max(cosL, 1e-6);
+        weight = misWeight(pBsdf, pLight);
+    }
+    branchContrib[pixel * 2u + branchId].xyz += p.throughput.rgb * emission * weight;
+}
+
+void main() {
+    gPixelCount = pc.width * pc.height;
+    gParity = pc.frame & 1u;
+    uint groupCountX = indirect.queueDispatch.x;
+    if (groupCountX == 0u) return;
+    uint index = (gl_WorkGroupID.y * groupCountX + gl_WorkGroupID.x) * 64u +
+                 gl_LocalInvocationIndex;
+    uint count = counters.pathCount[pc.queue];
+    if (index >= count) return;
+
+    Path p = pc.queue == 0u ? pathsA[index] : pathsB[index];
+    bool primaryPass = (pc.flags & 1u) != 0u;
+    uint frameIndex = pc.frame;
+    uint pixel = p.ids.x;
+    uint branchId = p.ids.y & 1u;
+    uint scatterCount = uint(p.throughput.w);
+    uint pathCls = pathClass(p);
+    uint rng = p.ids.z;
+    bool suppress = (p.ids.y & PF_SUPPRESS_EMITTER) != 0u;
+
+    if (primaryPass) writePrimaryInvalid(pixel, frameIndex);
+
+    Hit h = hits[index];
+    if (h.t < 0.0) {
+        flushPath(p, frameIndex);
+        return;
+    }
+
+    InstanceDesc inst = instances[h.instance];
+    Triangle tri = triangles[inst.triangleOffset + h.primitive];
+    vec3 Ng = normalize(tri.n.xyz);
+    vec3 dir = normalize(p.dirTmax.xyz);
+    vec3 pos = p.originTmin.xyz + dir * h.t;
+    uint matIndex = inst.material;
+    Material mat = materials[matIndex];
+    uint type = uint(mat.params.y);
+
+    if (type == MAT_EMISSIVE) {
+        if (primaryPass) {
+            vec3 n = Ng;
+            if (dot(n, -dir) > 0.0) analyticEmission[pixel].xyz += p.throughput.rgb * mat.emission.rgb;
+        } else {
+            setTerminal(p, pos, mat.params.x, matIndex, h.instance, h.primitive);
+            emitHit(p, pixel, branchId, pos, dir, h.t, matIndex, h.instance, h.primitive, suppress);
+        }
+        flushPath(p, frameIndex);
+        return;
+    }
+
+    if (type == MAT_MIRROR) {
+        vec2 uv = worldUV(pos, Ng);
+        float lod = computeMipLod(uintBitsToFloat(p.meta.y), h.t, Ng, dir);
+        vec3 albedo = sampleBaseColor(uint(mat.params.z), uv, lod);
+        if (primaryPass) pathCls = PATHCLASS_MIRROR;
+        p.throughput.rgb *= albedo;
+        vec3 n = dot(dir, Ng) < 0.0 ? Ng : -Ng;
+        appendChainPlane(p, tri.extra.y);
+        p.ids.y = ((p.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER) | PF_LAST_DELTA;
+        p.throughput.w = float(scatterCount + 1u);
+        p.ids.z = rng;
+        p.misc.y = floatBitsToUint(0.0);
+        p.meta.y = floatBitsToUint(max(uintBitsToFloat(p.meta.y), 0.02));
+        p.originTmin.xyz = pos + n * 0.002;
+        p.dirTmax.xyz = reflect(dir, n);
+        p.ids.y = (p.ids.y & ~(3u << PF_PATHCLASS_SHIFT)) | (pathCls << PF_PATHCLASS_SHIFT);
+        if (scatterCount >= 8u) { flushPath(p, frameIndex); return; }
+        appendPath(pc.queue == 0u, p, 2u * gPixelCount);
+        return;
+    }
+
+    if (type == MAT_DIELECTRIC) {
+        float ior = mat.absorption.w;
+        if (p.ids.w == matIndex + 1u) {
+            p.throughput.rgb *= exp(-mat.absorption.xyz * h.t);
+        }
+        pathCls = PATHCLASS_GLASS;
+        p.ids.y = (p.ids.y & ~(3u << PF_PATHCLASS_SHIFT)) | (pathCls << PF_PATHCLASS_SHIFT);
+        p.ids.y |= PF_CHAIN_GLASS;
+        bool entering = p.ids.w != matIndex + 1u;
+        vec3 n = dot(dir, Ng) < 0.0 ? Ng : -Ng;
+        float eta = entering ? (1.0 / ior) : ior;
+        float cosI = clamp(dot(-dir, n), 0.0, 1.0);
+        float fresnel = dielectricFresnel(cosI, eta);
+        bool tir = fresnel >= 1.0;
+        bool split = (p.ids.y & PF_GLASS_SPLIT_DONE) == 0u;
+        uint planeIndex = tri.extra.y;
+
+        if (split) {
+            p.ids.y |= PF_GLASS_SPLIT_DONE;
+            if (tir) {
+                Path q = p;
+                q.throughput.w = float(scatterCount + 1u);
+                q.ids.z = rng;
+                q.ids.y = ((q.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER) | PF_LAST_DELTA;
+                q.misc.y = floatBitsToUint(0.0);
+                appendChainPlane(q, planeIndex);
+                q.originTmin.xyz = pos + n * 0.002;
+                q.dirTmax.xyz = reflect(dir, n);
+                if (scatterCount >= 8u) { flushPath(q, frameIndex); return; }
+                appendPath(pc.queue == 0u, q, 2u * gPixelCount);
+                return;
+            }
+            Path refl = p;
+            refl.throughput.rgb *= fresnel;
+            refl.throughput.w = float(scatterCount + 1u);
+            refl.ids.z = pcgHash(rng ^ 0x9E3779B9u);
+            refl.ids.y = ((refl.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER) | PF_LAST_DELTA;
+            refl.misc.y = floatBitsToUint(0.0);
+            appendChainPlane(refl, planeIndex);
+            refl.originTmin.xyz = pos + n * 0.002;
+            refl.dirTmax.xyz = reflect(dir, n);
+
+            Path trans = p;
+            trans.throughput.rgb *= (1.0 - fresnel) * eta * eta;
+            trans.throughput.w = float(scatterCount + 1u);
+            trans.ids.z = pcgHash(rng ^ 0x68BC21EBu);
+            trans.ids.y = ((trans.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER) | PF_LAST_DELTA;
+            trans.ids.y |= PF_HAS_TRANSMISSION;
+            trans.ids.y = (trans.ids.y & ~1u) | 1u;
+            trans.ids.w = entering ? matIndex + 1u : 0u;
+            trans.misc.y = floatBitsToUint(0.0);
+            appendChainPlane(trans, planeIndex);
+            trans.originTmin.xyz = pos - n * 0.002;
+            trans.dirTmax.xyz = refract(dir, n, eta);
+            if (scatterCount >= 8u) {
+                flushPath(refl, frameIndex);
+                flushPath(trans, frameIndex);
+                return;
+            }
+            appendPath(pc.queue == 0u, refl, 2u * gPixelCount);
+            appendPath(pc.queue == 0u, trans, 2u * gPixelCount);
+            return;
+        }
+
+        bool reflectEvent = tir || rand(rng) < fresnel;
+        Path q = p;
+        q.throughput.w = float(scatterCount + 1u);
+        q.ids.z = rng;
+        q.ids.y = ((q.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER) | PF_LAST_DELTA;
+        q.misc.y = floatBitsToUint(0.0);
+        appendChainPlane(q, planeIndex);
+        if (reflectEvent) {
+            q.originTmin.xyz = pos + n * 0.002;
+            q.dirTmax.xyz = reflect(dir, n);
+        } else {
+            q.throughput.rgb *= eta * eta;
+            q.ids.y |= PF_HAS_TRANSMISSION;
+            q.ids.w = entering ? matIndex + 1u : 0u;
+            q.originTmin.xyz = pos - n * 0.002;
+            q.dirTmax.xyz = refract(dir, n, eta);
+        }
+        if (scatterCount >= 8u) { flushPath(q, frameIndex); return; }
+        float survival = clamp(max(q.throughput.r, max(q.throughput.g, q.throughput.b)), 0.05, 0.95);
+        if (scatterCount >= 4u && rand(rng) > survival) { flushPath(q, frameIndex); return; }
+        if (scatterCount >= 4u) q.throughput.rgb /= survival;
+        q.ids.z = rng;
+        appendPath(pc.queue == 0u, q, 2u * gPixelCount);
+        return;
+    }
+
+    // 非 delta 不透明表面。
+    vec3 N = dot(Ng, -dir) > 0.0 ? Ng : -Ng;
+    vec2 uv = worldUV(pos, N);
+    float lod = computeMipLod(uintBitsToFloat(p.meta.y), h.t, N, dir);
+    vec3 albedo = sampleBaseColor(uint(mat.params.z), uv, computeMipLod(uintBitsToFloat(p.meta.y), h.t, N, dir));
+    float roughness = clamp(sampleRoughness(uint(mat.params.z), uv, lod), 0.02, 1.0);
+    float alpha = max(roughness * roughness, 1e-3);
+
+    if (primaryPass) {
+        pathCls = (type == MAT_DIFFUSE) ? PATHCLASS_PRIMARY_DIFFUSE
+                                        : PATHCLASS_PRIMARY_SPECULAR;
+        writePrimary(pixel, frameIndex, pos, N, roughness, albedo, uv, h.instance, h.primitive,
+                     matIndex, pathCls);
+    }
+    if (pathCls >= PATHCLASS_MIRROR && !terminalValid(p)) {
+        setTerminal(p, pos, roughness, matIndex, h.instance, h.primitive);
+    }
+    p.ids.y = (p.ids.y & ~(3u << PF_PATHCLASS_SHIFT)) | (pathCls << PF_PATHCLASS_SHIFT);
+    p.ids.y &= ~PF_SUPPRESS_EMITTER;
+
+    vec3 wo = -dir;
+    if (!primaryPass) {
+        addNee(p, pos, N, wo, matIndex, albedo, alpha, pixel, branchId);
+    }
+
+    if (scatterCount >= 8u) { flushPath(p, frameIndex); return; }
+    float u1 = rand(rng);
+    float u2 = rand(rng);
+    vec3 wi;
+    float bsdfPdf = 0.0;
+    if (type == MAT_DIFFUSE) {
+        vec3 t;
+        vec3 b;
+        orthonormalBasis(N, t, b);
+        float r = sqrt(u1);
+        float phi = 2.0 * VPT_PI * u2;
+        vec3 local = vec3(r * cos(phi), r * sin(phi), sqrt(max(0.0, 1.0 - u1)));
+        wi = normalize(t * local.x + b * local.y + N * local.z);
+        bsdfPdf = max(dot(N, wi), 0.0) * VPT_INV_PI;
+        p.throughput.rgb *= albedo;
+    } else {
+        vec3 t;
+        vec3 b;
+        orthonormalBasis(N, t, b);
+        vec3 woLocal = vec3(dot(wo, t), dot(wo, b), dot(wo, N));
+        if (woLocal.z <= 0.0) { flushPath(p, frameIndex); return; }
+        vec3 wiLocal = sampleGgxVndf(woLocal, alpha, u1, u2, bsdfPdf);
+        if (wiLocal.z <= 0.0) { flushPath(p, frameIndex); return; }
+        wi = normalize(t * wiLocal.x + b * wiLocal.y + N * wiLocal.z);
+        vec3 hv = normalize(wo + wi);
+        float noV = max(dot(N, wo), 1e-4);
+        float noL = max(dot(N, wi), 1e-4);
+        float d = ggxD(max(dot(N, hv), 0.0), alpha);
+        float g = smithG2(noV, noL, alpha);
+        vec3 fr = fresnelSchlickVec(max(dot(wo, hv), 0.0), albedo);
+        vec3 f = fr * d * g / max(4.0 * noV * noL, 1e-8);
+        p.throughput.rgb *= f * noL / max(bsdfPdf, 1e-8);
+    }
+    float survival = clamp(max(p.throughput.r, max(p.throughput.g, p.throughput.b)), 0.05, 0.95);
+    if (scatterCount >= 4u) {
+        if (rand(rng) > survival) { flushPath(p, frameIndex); return; }
+        p.throughput.rgb /= survival;
+    }
+    if (luminance(p.throughput.rgb) <= 0.0) { flushPath(p, frameIndex); return; }
+
+    Path q = p;
+    q.originTmin.xyz = pos + N * 0.002;
+    q.dirTmax.xyz = wi;
+    q.throughput.w = float(scatterCount + 1u);
+    q.ids.z = rng;
+    q.ids.y = (q.ids.y & ~PF_LAST_DELTA) & ~PF_SUPPRESS_EMITTER;
+    if (primaryPass) q.ids.y |= PF_SUPPRESS_EMITTER;
+    q.misc.y = floatBitsToUint(bsdfPdf);
+    float spread = (type == MAT_DIFFUSE) ? 0.35 : max(roughness * 0.5, 0.02);
+    q.meta.y = floatBitsToUint(max(uintBitsToFloat(p.meta.y), spread));
+    appendPath(pc.queue == 0u, q, 2u * gPixelCount);
+}

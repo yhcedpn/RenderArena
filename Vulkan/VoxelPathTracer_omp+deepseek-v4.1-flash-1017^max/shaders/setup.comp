@@ -1,0 +1,59 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 7) buffer PathsABuf { Path pathsA[]; };
+layout(std430, set = 0, binding = 20) buffer CountersBuf {
+    uint pathCount[2];
+    uint shadowCount;
+    uint shadowTaskCount;
+    uint overflow;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+} counters;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uvec2 pixelCoord = gl_GlobalInvocationID.xy;
+    uint pixel = pixelCoord.y * pc.width + pixelCoord.x;
+    uint frameIndex = pc.frame;
+
+    vec2 jitter = pixelJitter(pixel, frameIndex);
+    vec2 screen = (vec2(pixelCoord) + 0.5 + jitter) * cam.extent.zw;
+    vec2 ndc = screen * 2.0 - 1.0;
+    float tanHalf = cam.position.w;
+    float aspect = cam.right.w;
+    vec3 dir = normalize(cam.forward.xyz + ndc.x * tanHalf * aspect * cam.right.xyz -
+                         ndc.y * tanHalf * cam.up.xyz);
+    float tmin = 0.05 / max(dot(dir, cam.forward.xyz), 1e-4);
+
+    uint glassMaterial = 0xFFFFFFFFu;
+    for (uint i = 0u; i < uint(materials.length()); ++i) {
+        if (uint(materials[i].params.y) == MAT_DIELECTRIC) { glassMaterial = i; break; }
+    }
+    uint medium = 0u;
+    vec3 camPos = cam.position.xyz;
+    if (all(greaterThanEqual(camPos, cam.glassMin.xyz)) &&
+        all(lessThanEqual(camPos, cam.glassMax.xyz)) && glassMaterial != 0xFFFFFFFFu) {
+        medium = glassMaterial + 1u;
+    }
+
+    Path p;
+    p.originTmin = vec4(camPos, tmin);
+    p.dirTmax = vec4(dir, 1000.0);
+    p.throughput = vec4(1.0, 1.0, 1.0, 0.0);
+    p.ids = uvec4(pixel, 0u, pcgHash(pixel ^ pcgHash(frameIndex + 0x85EBCA6Bu)), medium);
+    p.misc = uvec4(0u, floatBitsToUint(0.0), 0u, 0u);
+    p.terminal = uvec4(0u);
+    p.meta = uvec4(0u, floatBitsToUint(2.0 * tanHalf / max(float(pc.height), 1.0)), 0u, 0u);
+
+    uint capacity = 2u * pc.width * pc.height;
+    uint index = atomicAdd(counters.pathCount[0], 1u);
+    if (index < capacity) {
+        pathsA[index] = p;
+    } else {
+        atomicAdd(counters.overflow, 1u);
+    }
+}

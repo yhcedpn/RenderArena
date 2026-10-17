@@ -1,0 +1,82 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 13) readonly buffer RestirInitBuf { Reservoir restirInit[]; };
+layout(std430, set = 0, binding = 14) buffer RestirTemporalBuf { Reservoir restirTemporal[]; };
+layout(std430, set = 0, binding = 16) buffer RestirHistoryBuf { Reservoir restirHistory[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+float targetAtPrimary(PrimarySurface ps, uint lightIndex, vec2 bary) {
+    LightSample ls;
+    if (!reconstructLightSample(lightIndex, bary, ls)) return 0.0;
+    uint materialIndex = uint(ps.ids.z);
+    vec3 pos = ps.posDepth.xyz;
+    vec3 n = normalize(ps.normalRough.xyz);
+    vec3 wo = normalize(cam.position.xyz - pos);
+    float alpha = max(ps.normalRough.w * ps.normalRough.w, 1e-3);
+    float bsdfPdf;
+    float cosO;
+    float cosL;
+    float dist2;
+    vec3 contrib = evaluateDirect(pos, n, wo, materialIndex, ps.albedo.rgb, alpha, ls, bsdfPdf,
+                                  cosO, cosL, dist2);
+    return luminance(contrib);
+}
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    Reservoir init = restirInit[pixel];
+    Reservoir outRes = init;
+    PrimarySurface ps = primarySurfaces[parity * n + pixel];
+
+    bool reset = cam.flags.y > 0.5;
+    bool currentValid = uint(ps.tag.x) == pc.frame && (uint(ps.ids.w) & 1u) != 0u;
+
+    if (!reset && currentValid && init.sampleData.y != 0u) {
+        vec2 uvPrev = reprojectUV(ps.posDepth.xyz, pixel, pc.frame);
+        if (all(greaterThanEqual(uvPrev, vec2(0.0))) && all(lessThanEqual(uvPrev, vec2(1.0)))) {
+            ivec2 prevCoord = ivec2(floor(uvPrev * cam.extent.xy));
+            prevCoord = clamp(prevCoord, ivec2(0), ivec2(int(cam.extent.x) - 1,
+                                                        int(cam.extent.y) - 1));
+            uint prevPixel = uint(prevCoord.y) * pc.width + uint(prevCoord.x);
+            PrimarySurface prev = primarySurfaces[(parity ^ 1u) * n + prevPixel];
+            bool surfaceMatch = uint(prev.tag.x) == pc.frame - 1u &&
+                                (uint(prev.ids.w) & 1u) != 0u &&
+                                uint(prev.ids.z) == uint(ps.ids.z) &&
+                                length(prev.posDepth.xyz - ps.posDepth.xyz) <
+                                    0.05 + 0.01 * abs(ps.posDepth.w) &&
+                                dot(normalize(prev.normalRough.xyz),
+                                    normalize(ps.normalRough.xyz)) > 0.99;
+            if (surfaceMatch) {
+                Reservoir hist = restirHistory[(parity ^ 1u) * n + prevPixel];
+                if (hist.sampleData.y != 0u && hist.stats.z > 0.0) {
+                    float targetH = targetAtPrimary(ps, hist.sampleData.x,
+                                                    vec2(uintBitsToFloat(hist.sampleData.z),
+                                                         uintBitsToFloat(hist.sampleData.w)));
+                    float mh = min(hist.stats.y, 32.0);
+                    float totalH = hist.stats.x * mh * targetH / max(hist.stats.z, 1e-12);
+                    float totalC = init.stats.x * init.stats.y;
+                    float newM = init.stats.y + mh;
+                    float total = totalC + totalH;
+                    uint rng = pcgHash(pixel * 1664525u ^ pc.frame * 1013904223u ^ 0x85EBCA6Bu);
+                    bool useHistory = total > 0.0 && rand(rng) * total < totalH;
+                    if (useHistory) {
+                        outRes.sampleData = hist.sampleData;
+                        outRes.stats = vec4(total / max(newM, 1.0), newM, targetH, 0.0);
+                    } else {
+                        outRes.sampleData = init.sampleData;
+                        outRes.stats = vec4(total / max(newM, 1.0), newM, init.stats.z, 0.0);
+                    }
+
+                }
+            }
+        }
+    }
+    restirTemporal[pixel] = outRes;
+    restirHistory[parity * n + pixel] = outRes;
+}

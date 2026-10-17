@@ -1,0 +1,76 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 11) readonly buffer BranchContribBuf { vec4 branchContrib[]; };
+layout(std430, set = 0, binding = 12) readonly buffer BranchInfoBuf { BranchInfo branchInfo[]; };
+layout(std430, set = 0, binding = 17) readonly buffer RestirOutBuf { vec4 restirOut[]; };
+layout(std430, set = 0, binding = 22) buffer DomainRadianceBuf { vec4 domainRadiance[]; };
+layout(std430, set = 0, binding = 23) buffer DomainGuideBuf { Guide domainGuide[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    uint guideBase = (parity * DOMAIN_COUNT) * n;
+
+    vec3 radiance[6] = vec3[6](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
+    float bestLum[6] = float[6](-1.0, -1.0, -1.0, -1.0, -1.0, -1.0);
+    bool hasGuide[6] = bool[6](false, false, false, false, false, false);
+    Guide bestGuide[6];
+
+    for (uint b = 0u; b < 2u; ++b) {
+        BranchInfo bi = branchInfo[pixel * 2u + b];
+        if (bi.frame != pc.frame) continue;
+        vec3 c = branchContrib[pixel * 2u + b].xyz;
+        uint d = min(bi.domain, DOMAIN_COUNT - 1u);
+        radiance[d] += c;
+        if (bi.valid != 0u) {
+            float l = luminance(c);
+            if (!hasGuide[d] || l > bestLum[d]) {
+                bestGuide[d] = bi.guide;
+                bestLum[d] = l;
+                hasGuide[d] = true;
+            }
+        }
+    }
+
+    PrimarySurface ps = primarySurfaces[parity * n + pixel];
+    if (uint(ps.tag.x) == pc.frame && (uint(ps.ids.w) & 1u) != 0u) {
+        uint materialIndex = uint(ps.ids.z);
+        uint type = uint(materials[materialIndex].params.y);
+        uint d = (type == MAT_ROUGH_METAL) ? DOMAIN_SPECULAR : DOMAIN_DIFFUSE;
+        radiance[d] += restirOut[pixel].xyz;
+        Guide g;
+        vec3 nrm = normalize(ps.normalRough.xyz);
+        uint terminalId = (uint(ps.ids.x) << 16) | uint(ps.ids.y);
+        packGuide(g, ps.posDepth.xyz, ps.posDepth.w, nrm, ps.normalRough.w, 0u, terminalId,
+                  materialIndex, 1u, pc.frame);
+        bestGuide[d] = g;
+        bestLum[d] = max(bestLum[d], luminance(restirOut[pixel].xyz));
+        hasGuide[d] = true;
+    }
+
+    for (uint d = 0u; d < DOMAIN_COUNT; ++d) {
+        bool hasRadiance = any(greaterThan(radiance[d], vec3(0.0)));
+        if (!hasRadiance && !hasGuide[d]) continue;
+        domainRadiance[d * n + pixel] = vec4(radiance[d], 0.0);
+        if (hasGuide[d]) {
+            domainGuide[guideBase + d * n + pixel] = bestGuide[d];
+        } else {
+            Guide invalid;
+            invalid.posDepth0 = 0u;
+            invalid.posDepth1 = 0u;
+            invalid.normalRough0 = 0u;
+            invalid.normalRough1 = 0u;
+            invalid.chainHash = 0u;
+            invalid.terminalId = 0u;
+            invalid.materialFlags = 0u;
+            invalid.frameTag = pc.frame;
+            domainGuide[guideBase + d * n + pixel] = invalid;
+        }
+    }
+}

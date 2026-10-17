@@ -1,0 +1,109 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 10) readonly buffer PrimaryBuf { PrimarySurface primarySurfaces[]; };
+layout(std430, set = 0, binding = 14) readonly buffer RestirTemporalBuf { Reservoir restirTemporal[]; };
+layout(std430, set = 0, binding = 15) buffer RestirSpatialBuf { Reservoir restirSpatial[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+float targetAtPrimary(PrimarySurface ps, uint lightIndex, vec2 bary) {
+    LightSample ls;
+    if (!reconstructLightSample(lightIndex, bary, ls)) return 0.0;
+    uint materialIndex = uint(ps.ids.z);
+    vec3 pos = ps.posDepth.xyz;
+    vec3 n = normalize(ps.normalRough.xyz);
+    vec3 wo = normalize(cam.position.xyz - pos);
+    float alpha = max(ps.normalRough.w * ps.normalRough.w, 1e-3);
+    float bsdfPdf;
+    float cosO;
+    float cosL;
+    float dist2;
+    vec3 contrib = evaluateDirect(pos, n, wo, materialIndex, ps.albedo.rgb, alpha, ls, bsdfPdf,
+                                  cosO, cosL, dist2);
+    return luminance(contrib);
+}
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    PrimarySurface ps = primarySurfaces[parity * n + pixel];
+    Reservoir outRes;
+    outRes.sampleData = uvec4(0u);
+    outRes.stats = vec4(0.0);
+    if (uint(ps.tag.x) != pc.frame || (uint(ps.ids.w) & 1u) == 0u) {
+        restirSpatial[pixel] = outRes;
+        return;
+    }
+
+    Reservoir sources[5];
+    float totals[5];
+    float targets[5];
+    float ms[5];
+    uint count = 0u;
+    float totalM = 0.0;
+
+    Reservoir cur = restirTemporal[pixel];
+    if (cur.sampleData.y != 0u) {
+        float t = targetAtPrimary(ps, cur.sampleData.x,
+                                  vec2(uintBitsToFloat(cur.sampleData.z),
+                                       uintBitsToFloat(cur.sampleData.w)));
+        sources[count] = cur;
+        targets[count] = t;
+        totals[count] = cur.stats.x * cur.stats.y;
+        ms[count] = cur.stats.y;
+        totalM += cur.stats.y;
+        ++count;
+    }
+
+    uint h = pcgHash(pixel * 0x27D4EB2Fu ^ pc.frame * 0x165667B1u);
+    float baseAngle = float(h) * (1.0 / 4294967296.0) * 2.0 * VPT_PI;
+    for (uint k = 0u; k < 4u; ++k) {
+        float angle = baseAngle + float(k) * 0.5 * VPT_PI;
+        float r = float(pcgHash(h + k * 0x9E3779B9u) & 0xFFFFu) / 65535.0;
+        float radius = 4.0 + 4.0 * r;
+        ivec2 off = ivec2(round(cos(angle) * radius), round(sin(angle) * radius));
+        ivec2 coord = ivec2(int(pixel % pc.width), int(pixel / pc.width)) + off;
+        if (coord.x < 0 || coord.y < 0 || coord.x >= int(pc.width) || coord.y >= int(pc.height)) {
+            continue;
+        }
+        uint np = uint(coord.y) * pc.width + uint(coord.x);
+        PrimarySurface nps = primarySurfaces[parity * n + np];
+        if (uint(nps.tag.x) != pc.frame || (uint(nps.ids.w) & 1u) == 0u) continue;
+        if (uint(nps.ids.z) != uint(ps.ids.z)) continue;
+        if (dot(normalize(nps.normalRough.xyz), normalize(ps.normalRough.xyz)) < 0.9) continue;
+        if (abs(nps.posDepth.w - ps.posDepth.w) > 0.03 * abs(ps.posDepth.w) + 0.05) continue;
+        Reservoir nr = restirTemporal[np];
+        if (nr.sampleData.y == 0u || nr.stats.z <= 0.0) continue;
+        float t = targetAtPrimary(ps, nr.sampleData.x,
+                                  vec2(uintBitsToFloat(nr.sampleData.z),
+                                       uintBitsToFloat(nr.sampleData.w)));
+        sources[count] = nr;
+        targets[count] = t;
+        totals[count] = nr.stats.x * nr.stats.y * t / max(nr.stats.z, 1e-12);
+        ms[count] = nr.stats.y;
+        totalM += nr.stats.y;
+        ++count;
+        if (count >= 5u) break;
+    }
+
+    if (count == 0u) {
+        restirSpatial[pixel] = outRes;
+        return;
+    }
+    float totalWeight = 0.0;
+    for (uint i = 0u; i < count; ++i) totalWeight += totals[i];
+    uint rng = pcgHash(pixel * 2246822519u ^ pc.frame * 3266489917u ^ 0x68BC21EBu);
+    float pick = rand(rng) * totalWeight;
+    uint chosen = 0u;
+    float accum = 0.0;
+    for (uint i = 0u; i < count; ++i) {
+        accum += totals[i];
+        if (pick <= accum) { chosen = i; break; }
+    }
+    outRes.sampleData = sources[chosen].sampleData;
+    outRes.stats = vec4(totalWeight / max(totalM, 1.0), totalM, targets[chosen], 0.0);
+    restirSpatial[pixel] = outRes;
+}

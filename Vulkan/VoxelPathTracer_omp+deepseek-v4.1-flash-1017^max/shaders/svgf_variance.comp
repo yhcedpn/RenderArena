@@ -1,0 +1,86 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 23) readonly buffer DomainGuideBuf { Guide domainGuide[]; };
+layout(std430, set = 0, binding = 24) readonly buffer DomainM1Buf { vec4 domainM1[]; };
+layout(std430, set = 0, binding = 25) readonly buffer DomainM2Buf { vec4 domainM2[]; };
+layout(std430, set = 0, binding = 26) readonly buffer DomainHistBuf { uint domainHist[]; };
+layout(std430, set = 0, binding = 28) buffer ScratchColorABuf { vec4 scratchColorA[]; };
+layout(std430, set = 0, binding = 30) buffer ScratchVarABuf { float scratchVarA[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+bool compatible(Guide a, Guide b, uint domain) {
+    vec3 posA;
+    float depthA;
+    vec3 normalA;
+    float roughA;
+    uint matA;
+    uint flagsA;
+    vec3 posB;
+    float depthB;
+    vec3 normalB;
+    float roughB;
+    uint matB;
+    uint flagsB;
+    unpackGuide(a, posA, depthA, normalA, roughA, matA, flagsA);
+    unpackGuide(b, posB, depthB, normalB, roughB, matB, flagsB);
+    if ((flagsA & 1u) == 0u || (flagsB & 1u) == 0u) return false;
+    if (matA != matB) return false;
+    if (abs(depthA - depthB) > 0.02 * max(abs(depthA), abs(depthB)) + 0.02) return false;
+    if (dot(normalA, normalB) < 0.9) return false;
+    if (domain >= 2u) {
+        if (a.chainHash != b.chainHash || a.terminalId != b.terminalId) return false;
+    }
+    return true;
+}
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    uint d = pc.domainIndex;
+    uint index = (parity * DOMAIN_COUNT + d) * n + pixel;
+    Guide g = domainGuide[index];
+    if (g.frameTag != pc.frame) {
+        scratchColorA[pixel] = vec4(0.0);
+        scratchVarA[pixel] = 0.0;
+        return;
+    }
+    vec3 m1 = domainM1[index].rgb;
+    vec3 m2 = domainM2[index].rgb;
+    uint hist = domainHist[index];
+    float variance = max(dot(m2 - m1 * m1, vec3(0.2126, 0.7152, 0.0722)), 0.0);
+    bool guideValid = (g.materialFlags >> 16 & 1u) != 0u;
+
+    if (hist < 4u && guideValid) {
+        float weightSum = 0.0;
+        float lumSum = 0.0;
+        float lum2Sum = 0.0;
+        ivec2 center = ivec2(int(pixel % pc.width), int(pixel / pc.width));
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                ivec2 coord = center + ivec2(dx, dy);
+                if (coord.x < 0 || coord.y < 0 || coord.x >= int(pc.width) ||
+                    coord.y >= int(pc.height)) continue;
+                uint np = uint(coord.y) * pc.width + uint(coord.x);
+                Guide ng = domainGuide[(parity * DOMAIN_COUNT + d) * n + np];
+                if (ng.frameTag != pc.frame) continue;
+                if (!compatible(g, ng, d)) continue;
+                float w = (dx == 0 && dy == 0) ? 4.0 : 1.0;
+                float lum = luminance(domainM1[(parity * DOMAIN_COUNT + d) * n + np].rgb);
+                weightSum += w;
+                lumSum += w * lum;
+                lum2Sum += w * lum * lum;
+            }
+        }
+        if (weightSum > 0.0) {
+            float mean = lumSum / weightSum;
+            float localVariance = max(lum2Sum / weightSum - mean * mean, 0.0);
+            variance = max(variance, localVariance);
+        }
+    }
+    scratchColorA[pixel] = vec4(m1, 1.0);
+    scratchVarA[pixel] = variance;
+}

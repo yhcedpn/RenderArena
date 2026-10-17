@@ -1,7 +1,5 @@
-#include <cstdio>
+#include "src/app.hpp"
 
-int main()
-{
-    std::puts("VoxelPathTracer: build skeleton; renderer not implemented.");
-    return 0;
+int main() {
+    return vpt::runApp();
 }

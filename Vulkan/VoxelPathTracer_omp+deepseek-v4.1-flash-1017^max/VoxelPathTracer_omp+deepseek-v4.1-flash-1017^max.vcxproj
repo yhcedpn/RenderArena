@@ -29,10 +29,44 @@
   </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\app.cpp" />
+    <ClCompile Include="src\renderer.cpp" />
+    <ClCompile Include="src\renderer_frame.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClCompile Include="src\vk_context.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app.hpp" />
+    <ClInclude Include="src\math.hpp" />
+    <ClInclude Include="src\renderer.hpp" />
+    <ClInclude Include="src\scene.hpp" />
+    <ClInclude Include="src\shared.hpp" />
+    <ClInclude Include="src\vk_context.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md" />
     <None Include="materials.json" />
+    <None Include="shaders\atrous.comp" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\composite.comp" />
+    <None Include="shaders\display.frag" />
+    <None Include="shaders\display.vert" />
+    <None Include="shaders\prepare.comp" />
+    <None Include="shaders\resolve.comp" />
+    <None Include="shaders\restir_initial.comp" />
+    <None Include="shaders\restir_shadow.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\setup.comp" />
+    <None Include="shaders\shade.comp" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\svgf_finalize.comp" />
+    <None Include="shaders\svgf_temporal.comp" />
+    <None Include="shaders\svgf_variance.comp" />
+    <None Include="shaders\trace.rchit" />
+    <None Include="shaders\trace.rgen" />
+    <None Include="shaders\trace.rmiss" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

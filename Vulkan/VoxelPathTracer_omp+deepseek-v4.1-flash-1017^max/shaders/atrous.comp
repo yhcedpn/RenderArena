@@ -1,0 +1,95 @@
+#version 460
+#include "common.glsl"
+
+layout(std430, set = 0, binding = 23) readonly buffer DomainGuideBuf { Guide domainGuide[]; };
+layout(std430, set = 0, binding = 28) buffer ScratchColorABuf { vec4 scratchColorA[]; };
+layout(std430, set = 0, binding = 29) buffer ScratchColorBBuf { vec4 scratchColorB[]; };
+layout(std430, set = 0, binding = 30) buffer ScratchVarABuf { float scratchVarA[]; };
+layout(std430, set = 0, binding = 31) buffer ScratchVarBBuf { float scratchVarB[]; };
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    if (gl_GlobalInvocationID.x >= pc.width || gl_GlobalInvocationID.y >= pc.height) return;
+    uint pixel = gl_GlobalInvocationID.y * pc.width + gl_GlobalInvocationID.x;
+    uint n = pc.width * pc.height;
+    uint parity = pc.frame & 1u;
+    uint d = pc.domainIndex;
+    bool readA = (pc.iteration & 1u) == 0u;
+    Guide g = domainGuide[(parity * DOMAIN_COUNT + d) * n + pixel];
+    vec4 centerColor = readA ? scratchColorA[pixel] : scratchColorB[pixel];
+    float centerVar = readA ? scratchVarA[pixel] : scratchVarB[pixel];
+    if (g.frameTag != pc.frame) {
+        centerColor = vec4(0.0);
+        centerVar = 0.0;
+    }
+    bool guideValid = (g.materialFlags >> 16 & 1u) != 0u;
+    if (!guideValid) {
+        if (readA) { scratchColorB[pixel] = centerColor; scratchVarB[pixel] = centerVar; }
+        else { scratchColorA[pixel] = centerColor; scratchVarA[pixel] = centerVar; }
+        return;
+    }
+
+    vec3 posP;
+    float depthP;
+    vec3 normalP;
+    float roughP;
+    uint matP;
+    uint flagsP;
+    unpackGuide(g, posP, depthP, normalP, roughP, matP, flagsP);
+    float lumP = luminance(centerColor.rgb);
+    float varP = max(centerVar, 1e-4);
+    int step = int(1u << pc.iteration);
+    ivec2 center = ivec2(int(pixel % pc.width), int(pixel / pc.width));
+    float kernel[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
+    float sumW = 0.0;
+    vec3 sumC = vec3(0.0);
+    float sumV = 0.0;
+    for (int ky = -2; ky <= 2; ++ky) {
+        for (int kx = -2; kx <= 2; ++kx) {
+            ivec2 coord = center + ivec2(kx * step, ky * step);
+            if (coord.x < 0 || coord.y < 0 || coord.x >= int(pc.width) ||
+                coord.y >= int(pc.height)) continue;
+            uint np = uint(coord.y) * pc.width + uint(coord.x);
+            Guide ng = domainGuide[(parity * DOMAIN_COUNT + d) * n + np];
+            if (ng.frameTag != pc.frame) continue;
+            vec3 posQ;
+            float depthQ;
+            vec3 normalQ;
+            float roughQ;
+            uint matQ;
+            uint flagsQ;
+            unpackGuide(ng, posQ, depthQ, normalQ, roughQ, matQ, flagsQ);
+            if ((flagsQ & 1u) == 0u || matQ != matP) continue;
+            if (d >= 2u && (ng.chainHash != g.chainHash || ng.terminalId != g.terminalId)) continue;
+            float depthTol = 0.02 * max(abs(depthP), abs(depthQ)) + 0.02;
+            if (abs(depthP - depthQ) > depthTol) continue;
+            float normalDot = dot(normalP, normalQ);
+            if (normalDot < 0.9) continue;
+            float depthW = exp(-abs(depthP - depthQ) / depthTol);
+            float normalW = pow(max(normalDot, 0.0), 32.0);
+            float roughW = exp(-abs(roughP - roughQ) / 0.1);
+            vec4 colorQ = readA ? scratchColorA[np] : scratchColorB[np];
+            float lumQ = luminance(colorQ.rgb);
+            float lumW = exp(-abs(lumQ - lumP) / (2.0 * sqrt(varP) + 1e-3));
+            float w = kernel[kx + 2] * kernel[ky + 2] * depthW * normalW * roughW * lumW;
+            float varQ = readA ? scratchVarA[np] : scratchVarB[np];
+            sumW += w;
+            sumC += w * colorQ.rgb;
+            sumV += w * w * max(varQ, 0.0);
+        }
+    }
+    vec3 outColor = centerColor.rgb;
+    float outVar = centerVar;
+    if (sumW > 1e-6) {
+        outColor = sumC / sumW;
+        outVar = sumV / (sumW * sumW);
+    }
+    if (readA) {
+        scratchColorB[pixel] = vec4(outColor, 1.0);
+        scratchVarB[pixel] = outVar;
+    } else {
+        scratchColorA[pixel] = vec4(outColor, 1.0);
+        scratchVarA[pixel] = outVar;
+    }
+}
