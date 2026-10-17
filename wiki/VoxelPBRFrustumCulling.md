@@ -12,7 +12,3 @@
 
 - [gpt-5.6-luna 执行 VoxelPBRFrustumCulling 任务（#21）](https://github.com/yhcedpn/RenderArena/issues/21)
 - [gpt-5.6-terra 执行 VoxelPBRFrustumCulling 任务（#17）](https://github.com/yhcedpn/RenderArena/issues/17)
-
-## 构建核验（2026-10-17）
-
-两份答卷均通过 Windows CMake Debug/Release 与 VS 解决方案构建，最终日志无 warning/error。可执行文件、匹配配置的 GLFW DLL 和 `materials.json` 位于各任务目录 `bin/<预设>/`。

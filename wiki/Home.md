@@ -1,10 +1,10 @@
 # RenderArena Wiki
 
-RenderArena 的项目介绍与当前测评状态见 [README](https://github.com/yhcedpn/RenderArena/blob/main/README.md)。本页提供构建步骤和任务导航。
+RenderArena 的项目介绍与工程入口见 [README](https://github.com/yhcedpn/RenderArena/blob/main/README.md)。本页提供构建步骤和任务导航。
 
 ## 当前任务
 
-[VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer)：Vulkan 1.4 体素展厅，要求硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF 和镜面/玻璃分域历史。实现状态与题面入口见任务页。
+[VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer)：Vulkan 1.4 体素展厅，要求硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF 和镜面/玻璃分域历史。题面与实现说明入口见任务页。
 
 ## 构建
 
@@ -58,11 +58,11 @@ Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`�
 
 当前目标可执行文件为 Windows 的 `VoxelPathTracer.exe` 或 Linux 的 `VoxelPathTracer`。`materials.json` 部署到可执行文件同目录；独立 stage shader 在构建时编译到 `shaders/<相对源文件名>.spv`。部署映射见[任务执行规范](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。
 
-构建、算法和交互的完成条件分别见题面“交付与验收”。实际核验记录放在对应答卷的 `IMPLEMENTATION.md`，并注明平台、配置、诊断与未核验行为。
+构建、算法和交互的完成条件分别见题面“交付与验收”，核验记录见答卷的 [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md)。
 
 ## 历史答卷
 
-以下页面保留旧答卷的来源和核验记录；其源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。旧记录不代表当前 VoxelPathTracer 的核验结果。
+以下页面提供历史答卷的来源与文档入口；源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。
 
 - [OpenGL 任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：VoxelPBRFrustumCulling。
 - [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：RubikCube、MiniVoxelPathTracer。
@@ -70,6 +70,5 @@ Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`�
 ## 文档维护
 
 - 当前工程入口以 `RenderArena.slnx` 为准；新增答卷的平台和构建配置由答卷目录声明。
-- 文档职责与同题题面维护规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。Wiki 任务页链接题面，核验记录注明日期与适用答卷。
+- 文档职责与同题题面维护规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。
 - Wiki 源文件位于仓库 `wiki/`。[Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)在 `main` 上的 `wiki/**` 或同步工作流文件变更时运行，也支持 `workflow_dispatch` 手动触发。同步以 `wiki/` 为准，包含删除页面；没有内容变化时跳过提交。
-- 构建与运行核验在本地执行；构建 CI 和 Release 发布工作流保持停用。

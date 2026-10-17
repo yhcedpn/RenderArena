@@ -6,11 +6,11 @@
 | --- | --- | --- |
 | [VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer) | Vulkan 1.4、硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF | omp + deepseek-v4.1-flash-1017^max |
 
-工程状态与规格入口见任务页，依赖准备和构建步骤见[构建指南](https://github.com/yhcedpn/RenderArena/wiki/Home#构建)。
+工程、题面与实现说明入口见任务页，依赖准备和构建步骤见[构建指南](https://github.com/yhcedpn/RenderArena/wiki/Home#构建)。
 
 ## 历史答卷
 
-以下题目已移出当前解决方案；任务页保留固定提交的源码链接、答卷来源与核验记录。
+以下题目已移出当前解决方案；任务页提供答卷来源及固定提交的源码与文档链接。
 
 | 题目 | 主题 | 工具与模型 |
 | --- | --- | --- |
