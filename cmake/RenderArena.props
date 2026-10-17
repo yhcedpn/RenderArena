@@ -16,7 +16,7 @@ cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&a
 cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build --preset $(ArenaPreset) --clean-first</NMakeReBuildCommandLine>
     <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; if exist "obj\$(ArenaPreset)\CMakeCache.txt" "$(ArenaCMake)" --build --preset $(ArenaPreset) --target clean</NMakeCleanCommandLine>
     <NMakeOutput>$(OutDir)$(ArenaExecutable).exe</NMakeOutput>
-    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)obj\$(ArenaPreset)\vcpkg_installed\x64-windows\include;$(ProjectDir)obj\$(ArenaPreset)\vcpkg_installed\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir)src;$(ProjectDir)obj\dependencies\Windows\x64-windows\include;$(ProjectDir)obj\dependencies\Windows\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)'=='Debug'">_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)'=='Release'">NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <AdditionalOptions>/std:c++20 %(AdditionalOptions)</AdditionalOptions>

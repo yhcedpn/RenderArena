@@ -15,7 +15,9 @@
       "binaryDir": "${sourceDir}/obj/${presetName}",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "ARENA_PRESET_NAME": "${presetName}"
+        "ARENA_PRESET_NAME": "${presetName}",
+        "VCPKG_MANIFEST_INSTALL": "OFF",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/obj/dependencies/${hostSystemName}"
       },
       "condition": {
         "type": "equals",
@@ -33,7 +35,9 @@
       "binaryDir": "${sourceDir}/obj/${presetName}",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows",
-        "ARENA_PRESET_NAME": "${presetName}"
+        "ARENA_PRESET_NAME": "${presetName}",
+        "VCPKG_MANIFEST_INSTALL": "OFF",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/obj/dependencies/${hostSystemName}"
       },
       "condition": {
         "type": "equals",
@@ -51,7 +55,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "VCPKG_TARGET_TRIPLET": "x64-linux",
-        "ARENA_PRESET_NAME": "${presetName}"
+        "ARENA_PRESET_NAME": "${presetName}",
+        "VCPKG_MANIFEST_INSTALL": "OFF",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/obj/dependencies/${hostSystemName}"
       },
       "condition": {
         "type": "equals",
@@ -69,7 +75,9 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_TARGET_TRIPLET": "x64-linux",
-        "ARENA_PRESET_NAME": "${presetName}"
+        "ARENA_PRESET_NAME": "${presetName}",
+        "VCPKG_MANIFEST_INSTALL": "OFF",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/obj/dependencies/${hostSystemName}"
       },
       "condition": {
         "type": "equals",
