@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
 
+include(../../cmake/Vcpkg.cmake)
 project(RubikCube LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+include(../../cmake/RenderArena.cmake)
 
-find_package(Vulkan REQUIRED)
+find_package(VulkanHeaders 1.4 CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
 find_package(volk CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
@@ -17,8 +17,9 @@ set_source_files_properties(shaders.inc PROPERTIES HEADER_FILE_ONLY ON)
 target_link_libraries(RubikCube PRIVATE
     glfw
     volk::volk
-    Vulkan::Vulkan
+    Vulkan::Headers
     nlohmann_json::nlohmann_json
+    ${CMAKE_DL_LIBS}
 )
 
 if(MSVC)

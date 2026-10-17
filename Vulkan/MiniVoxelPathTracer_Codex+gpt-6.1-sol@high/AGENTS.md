@@ -1,14 +1,14 @@
 # MiniVoxelPathTracer 测评执行规则
 
-本目录是 Codex + gpt-6.1-sol@high 的独立测评工作目录。完整需求以 MiniVoxelPathTracer_TASK.md 为准。
+本目录是 `MiniVoxelPathTracer_Codex+gpt-6.1-sol@high` 的独立答卷。功能要求以 `MiniVoxelPathTracer_TASK.md` 为准，以下规则用于执行测评。
 
-- 禁止联网搜索、访问网页或使用外部资料连接器；禁止查看、读取或修改本目录之外的内容，包括其他答卷、上级文件、外部技能文件与其他会话。不得派生会话或启动子代理。
-- 所有显式文件操作及 shell 工作目录限定为本目录与子目录。允许调用已安装编译器、CMake 和构建所需工具；工具内部读取系统库和已安装依赖属于构建行为，不允许自行浏览这些目录。依赖准备由主会话负责，测评期间不联网获取依赖。
-- 使用简体中文回复。新增普通注释和 XML 注释使用简体中文，仅解释有价值的原因、约束与取舍。
-- 优先在 main.cpp 实现，辅助代码使用头文件，GLSL 放在 shaders/。必须将全部必选机制接入真实调用路径，不以 mock、硬编码画面、空调用、软件求交或静默降级替代。
-- 禁止修改 CMakeLists.txt、CMakePresets.json、platforms.json、vcpkg.json、vcpkg-configuration.json 及已有 VS 项目配置。仅允许为新增文件向 vcxproj / filters 添加引用行：cpp 使用 ClCompile，头文件使用 ClInclude，shader/inc 使用 None 与源文件 filter，资源使用 None 与资源文件 filter。
-- 不修改题面或 materials.json，不修改 gitignore / Git exclude。Git 提交、分支、推送和 PR 全部由主会话负责。
-- main.cpp 当前仅是构建框架的明确失败入口，必须替换为完整实现，不能将框架编译成功视作任务完成。
-- 运行与变更相称的构建与验证；编译器、shader 编译器和 Vulkan 的 warning/error/诊断均视为失败，Vulkan INFO 只记录。不得屏蔽或弱化有效诊断与测试。
-- Windows 构建：cmake --preset windows-msvc-debug，然后 cmake --build out/windows-msvc-debug --config Debug；Release 使用 windows-msvc-release。Linux 使用 linux-gcc-debug/release，未验证的平台如实报告。
-- 遇到缺口，报告具体缺失合同，不改变成功标准。完成前有限复查最终代码与实际调用路径，清除本次任务无用代码；在 IMPLEMENTATION.md 记录 pass、容量、归一化、历史规则、同步所有权及实际核验结果。
+- 显式文件操作与 shell 工作目录只能位于本目录及子目录。可读取随题提供的规范、题面、构建配置、资源、当前答卷源码和本轮生成物。
+- 不得读取或检索上级目录、其他答卷、`.git`、Git 历史、其他会话、既有实现说明、评审、截图或历史运行日志。不得通过构建产物获取其他实现。
+- 禁止联网搜索、网页、外部资料连接器、子代理和派生会话。算法材料仅限组织者随题提供的内容。
+- 允许调用已安装的编译器、CMake、shader 编译器和程序；工具内部读取系统库、共享构建配置及已安装依赖属于构建行为。不得主动浏览这些任务目录外的文件，不得安装或修改依赖。
+- 不修改题面、`materials.json`、既有构建配置、依赖、平台声明、`.gitignore` 或 Git exclude。只可为新文件向 `.vcxproj/.filters` 添加引用行。Git 操作由组织者负责。
+- C++20 使用 `.cpp/.hpp`，C17 使用 `.c/.h`，不混用语言后缀。VS 中源文件为 `ClCompile`、头文件为 `ClInclude`、shader/inc 和资源为 `None`；filter 分别为“源文件”“头文件”“资源文件”，shader/inc 归入“源文件”。
+- 使用简体中文。实现优先放在 `main.cpp` 或既有源码入口，辅助代码优先使用头文件；必须将题面要求的机制接入真实渲染调用路径。
+- 在本目录运行 `cmake --preset windows-msvc-debug` 和 `cmake --build --preset windows-msvc-debug`；Release 对应 `windows-msvc-release`。Linux 对应 `linux-gcc-debug/release`，平台以 `platforms.json` 为准。
+- 运行产物位于 `bin/<预设>/`，中间文件与依赖安装树位于 `obj/<预设>/`。编译器、shader 编译器和运行校验的 warning/error/诊断视为失败，Vulkan INFO 仅记录；不得屏蔽或弱化诊断。
+- 在 `IMPLEMENTATION.md` 记录实际实现机制、构建与运行平台、验证结果和具体缺口；本轮未执行的验证不得写为通过。

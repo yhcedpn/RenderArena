@@ -5,12 +5,15 @@
 | 工具与模型 | 答卷源码 | 任务定义 | 实现说明 |
 | --- | --- | --- | --- |
 | Codex + gpt-6.1-sol@high | [答卷目录](https://github.com/yhcedpn/RenderArena/tree/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high) | [MiniVoxelPathTracer_TASK.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/MiniVoxelPathTracer_TASK.md) | [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/IMPLEMENTATION.md) |
+| omp + deepseek-v4.1-flash-1017@max | [答卷目录](https://github.com/yhcedpn/RenderArena/tree/codex/minivoxelpathtracer-omp-deepseek-v4-1-flash-1017-max/Vulkan/MiniVoxelPathTracer_omp+deepseek-v4.1-flash-1017@max) | [MiniVoxelPathTracer_TASK.md](https://github.com/yhcedpn/RenderArena/blob/codex/minivoxelpathtracer-omp-deepseek-v4-1-flash-1017-max/Vulkan/MiniVoxelPathTracer_omp+deepseek-v4.1-flash-1017@max/MiniVoxelPathTracer_TASK.md) | [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/codex/minivoxelpathtracer-omp-deepseek-v4-1-flash-1017-max/Vulkan/MiniVoxelPathTracer_omp+deepseek-v4.1-flash-1017@max/IMPLEMENTATION.md) |
 
-答卷使用独立 Codex 会话生成，生成阶段禁止联网搜索及读取任务目录外的内容；实现包含代码复查反馈后的修正。下文为完整任务规格，实际 pass 顺序、队列容量、ReSTIR 归一化、光学历史及同步规则见实现说明。
+Codex 答卷使用独立 Codex 会话生成，生成阶段禁止联网搜索及读取任务目录外的内容；实现包含代码复查反馈后的修正。下文为完整任务规格，实际 pass 顺序、队列容量、ReSTIR 归一化、光学历史及同步规则见实现说明。
 
 ## 构建与核验状态
 
-以下结果记录于 2026-10-03，详细核验范围见 [实现说明的实际核验章节](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/IMPLEMENTATION.md#实际核验)。构建方法见 [构建指南](https://github.com/yhcedpn/RenderArena/wiki#如何构建)。
+2026-10-17，两份答卷均通过 Windows CMake Debug/Release 和 VS 解决方案的构建，最终日志无 warning/error。
+
+以下 Codex 答卷结果记录于 2026-10-03，详细核验范围见 [实现说明的实际核验章节](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/MiniVoxelPathTracer_Codex+gpt-6.1-sol@high/IMPLEMENTATION.md#实际核验)。构建方法见 [构建指南](https://github.com/yhcedpn/RenderArena/wiki#如何构建)。
 
 | 平台 | 已记录的核验结果 |
 | --- | --- |
@@ -19,7 +22,25 @@
 
 运行核验还覆盖相机与窗口交互、镜面/玻璃分域历史、11 类非法材质配置拒绝及合法材质变化。记录中的早期 Release 校验层运行发生在构建模式策略调整之前；现有 Release 按题目要求关闭校验层。
 
-## 一 任务目标与范围
+| 项目 | 要求 |
+| --- | --- |
+| 图形 API | Vulkan 1.4 |
+| 语言 | C++20；C 辅助代码为 C17 |
+| 输入资源 | 当前目录的 `materials.json` |
+| 平台 | 以当前目录 `platforms.json` 为准 |
+
+## 测评边界与构建
+
+- 所有显式文件操作和 shell 工作目录限定在当前任务目录及其子目录。只读取随题提供的规范、题面、构建配置、资源、当前答卷源码和本轮生成物。
+- 禁止读取或搜索上级目录、其他答卷、Git 历史、其他会话、既有实现说明、评审、截图和历史运行日志；禁止联网、外部资料连接器、子代理和派生会话。
+- 可以调用已安装的构建及运行工具；工具内部读取系统库、共享构建配置和已安装依赖不属于主动越界读取。依赖由组织者准备，测评期间不得安装或更改依赖。
+- 保持题面、`materials.json`、既有工程设置和依赖声明不变；只允许为新增文件添加 VS 项目及 filter 引用行。
+- C++ 使用 C++20、`.cpp/.hpp`；确需 C 时使用 C17、`.c/.h`，不混用语言后缀。shader 使用独立的 GLSL 文件或题面明确允许的包含资源。
+- 使用当前目录预设分别构建 Debug 和 Release：`cmake --preset windows-msvc-debug`、`cmake --build --preset windows-msvc-debug`；Release 对应 `windows-msvc-release`。Linux 对应 `linux-gcc-debug/release`，平台以 `platforms.json` 为准。
+- 程序和运行资源输出至 `bin/<预设>/`，CMake 中间文件与依赖安装在 `obj/<预设>/`。编译器、shader 编译器及运行校验诊断按失败处理，不得屏蔽。
+- 交付源码、shader 和必要资源，在 `IMPLEMENTATION.md` 记录实现机制、实际构建与运行结果、具体缺口；Git 操作由组织者负责。
+
+## 目标
 
 使用 **C++20、GLSL 和 Vulkan 1.4** 实现单窗口、可自由移动摄像机的小型体素展厅。完整渲染链必须包含硬件光线追踪、GPU wavefront 多反弹积分、自研 ReSTIR DI、自研 SVGF、平面镜的反射空间重投影，以及独立的厚玻璃反射和透射信号处理。
 
@@ -27,9 +48,9 @@
 
 场景静态，只提供相机操作与窗口操作。不要求方块编辑、动画、世界流送、水体、参与介质、景深、运动模糊、超分辨率、ReSTIR GI/PT、光照缓存或专门的焦散求解器。不要求命令行验收模式、图像导出或高 SPP 参考模式。
 
-## 二 语言 依赖与跨平台工程
+## 语言 依赖与跨平台工程
 
-### 1 语言与工程边界
+### 语言与工程边界
 
 - C++ 必须以 C++20 标准编译；所有 shader 使用 GLSL，编译为适用于 Vulkan 1.4 的 SPIR-V，版本不高于 1.6。
 - 目标平台为 Windows 和 Linux；窗口、输入、文件读取及资源生命周期代码必须适应两种平台，不依赖 Win32 专有窗口或文件接口。
@@ -38,17 +59,17 @@
 - 本题资源包中的 `materials.json` 必须作为外部文件随程序部署。资源路径使用跨平台路径处理，并以可执行文件所在目录作为基准，不依赖启动时的工作目录或上级源码目录。
 - 所有任务相关读取、修改和生成物限定在当前任务目录及其子目录，不修改共享配置或已安装依赖树。
 
-### 2 允许依赖
+### 允许依赖
 
-仅使用测评工程已声明的以下依赖，按需选择：GLFW、Vulkan headers/loader、volk、Vulkan Memory Allocator、Vulkan Utility Libraries、shaderc、SPIRV-Tools、SPIRV-Reflect、nlohmann-json。
+仅使用测评工程已声明的以下依赖，按需选择：GLFW、Vulkan headers、volk、可选的 Vulkan Memory Allocator、shaderc、nlohmann-json。
 
 GLFW 用于窗口、事件和 Vulkan Surface；volk 用于 Vulkan 函数加载；`materials.json` 使用 nlohmann-json 读取。shader 可通过 shaderc 在运行时编译，也可使用工程已有的 shader 编译入口；交付 GLSL 源码，编译失败必须报告诊断并退出，不能使用另一份内置 shader 继续运行。
 
-不引入 Slang、ImGui、RTXDI、NRD、OIDN、OptiX、FSR、第三方渲染框架或其他未声明的功能库。可以参考论文与公开算法说明，但积分器、ReSTIR DI、SVGF、体素表面提取与光学历史处理必须在本项目中自行实现，不能包装第三方完整功能实现冒充自研。
+不引入 Slang、ImGui、RTXDI、NRD、OIDN、OptiX、FSR、第三方渲染框架或其他未声明的功能库。算法资料仅限组织者随题提供的内容；积分器、ReSTIR DI、SVGF、体素表面提取与光学历史处理必须在本项目中自行实现，不能包装第三方完整功能实现冒充自研。
 
-## 三 Vulkan 能力与实际 API 路径
+## Vulkan 能力与实际 API 路径
 
-### 1 能力合同
+### 能力合同
 
 启动时分别检查 loader/instance 和物理设备的 Vulkan 1.4 支持，通过 features/properties 查询建立设备能力报告，查询并启用实际消费者需要的 feature。必需能力包括：
 
@@ -59,7 +80,7 @@ GLFW 用于窗口、事件和 Vulkan Surface；volk 用于 Vulkan 函数加载�
 
 不依赖厂商专有扩展，不以 GPU 型号代替能力检查。缺少必需能力时报告具体缺项并退出，不切换到软件求交、CPU 渲染、Ray Query 或光栅世界渲染。Windows/Linux 支持是平台合同，不代表任意 GPU 都具有本题所需能力。
 
-### 2 绑定与执行
+### 绑定与执行
 
 - 世界求交必须使用真实 Triangle BLAS/TLAS、SBT 和 Ray Tracing Pipeline。执行使用 `vkCmdTraceRaysKHR` 与后续 GPU 参数驱动的 `vkCmdTraceRaysIndirectKHR`；不以 compute shader 中遍历自建 BVH 或解析遍历方块代替硬件求交。
 - RT pipeline 的 `maxPipelineRayRecursionDepth` 固定为 1。多反弹通过 wavefront 队列和多次 dispatch 推进，不通过 closest-hit 中递归调用 `traceRayEXT` 实现。
@@ -71,11 +92,11 @@ GLFW 用于窗口、事件和 Vulkan Surface；volk 用于 Vulkan 函数加载�
 
 本题不强制 Host Image Copy、Push Descriptors、Pipeline Binary 或专用传输队列。纹理和几何可通过 staging buffer 上传，建立完整传输依赖即可；不为了凑齐 Vulkan 1.4 特性加入与实际渲染无关的调用。
 
-## 四 材质配置与程序化纹理
+## 材质配置与程序化纹理
 
 随题提供的 `materials.json` 是材质数值的唯一来源。代码中可以固定场景引用的材质 ID，不得重复保存基础色、粗糙度、IOR、吸收系数、发光强度、纹理种子或纹理尺寸的数值副本。
 
-### 1 配置格式
+### 配置格式
 
 根对象包含 `schemaVersion`、`textureSize` 和 `materials`。版本为 1；`textureSize` 为 16 至 1024 范围内的 2 的整数次幂，默认资源包取 128。材质包含：
 
@@ -96,7 +117,7 @@ GLFW 用于窗口、事件和 Vulkan Surface；volk 用于 Vulkan 函数加载�
 
 缺失文件、解析失败、版本不支持、字段类型或范围错误、ID 重复及场景 ID 无法解析时，明确报告错误并退出；不得使用内置默认材质。无需逐帧重新读取文件，修改配置后重新启动即可。
 
-### 2 纹理生成与采样
+### 纹理生成与采样
 
 CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureSize`。不要求法线贴图。`solid` 为常量；`stone_noise` 为确定性的多尺度 Value 噪声；`wood_grain` 为沿局部纹理 U 方向延伸的条纹，叠加低频 Value 噪声扰动。使用配置种子，同一实现下相同配置必须得到相同纹理。
 
@@ -104,15 +125,15 @@ CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureS
 
 生成完整 mip 链。基础色 mip 必须在线性颜色空间平均后重新编码，粗糙度 mip 在线性标量域生成。所有暴露面使用每世界单位重复一次的 UV；表面合并不得拉伸原本按单位方块重复的纹理。RT shader 通过自行维护的 ray cone 或 ray differential 估计 footprint，显式选择 mip，不使用永远固定为 0 的 LOD。滤波和地址模式为线性、trilinear、repeat，不强制 anisotropy。
 
-## 五 确定的静态场景
+## 确定的静态场景
 
-### 1 坐标与建模规则
+### 坐标与建模规则
 
 右手坐标系，Y 向上，X/Z 是水平轴；不规定世界轴与屏幕方向的对应关系。单位方块格 `(x,y,z)` 覆盖 `[x,x+1] × [y,y+1] × [z,z+1]`。以下范围均是整数格索引、包含两端，不是方块中心坐标。
 
 场景固定为 16×16 格的展厅，墙高 6 个单位、地板厚 1 个单位。按下面顺序填充，后写入的材质替换同一格中的先前材质；未填充格为空气。除规定的几何外，不添加装饰、文字、UI 或替代布局。
 
-### 2 格子布局
+### 格子布局
 
 | 顺序 | 格子范围或列表 | 材质 |
 | --- | --- | --- |
@@ -134,7 +155,7 @@ CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureS
 
 玻璃的 8 个格子先合并为一个整体 2×2×2、无内部界面的闭合体，再将整个玻璃体沿 Y 上移 0.125 单位，最终边界为 `[7,9] × [0.125,2.125] × [7,9]`。这是唯一的非整数位置调整，用于避开玻璃底面与不透明地板的共面接触。不得把它们当作 8 个彼此重合的空气/玻璃边界。场景不存在其他玻璃体、接触的异介质界面、嵌套介质或参与介质。
 
-### 3 表面提取与 AS
+### 表面提取与 AS
 
 必须删除相邻不透明方块之间的内部面；玻璃体内部的面同样删除，保留玻璃体的完整外边界。不透明与玻璃几何按最终实际位置分别提取，不以平移前的格子邻接关系删除玻璃底面或其下方地板顶面。无需处理本题没有提供的接触异介质或嵌套介质。
 
@@ -144,7 +165,7 @@ CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureS
 
 不按主相机视锥删除 AS 内的屏幕外几何；它们仍参与反射、阴影和间接照明。
 
-## 六 相机与窗口操作
+## 相机与窗口操作
 
 - 默认可见窗口客户区为 1280×720；摄像机初始位置 `(8,2.5,20)`，看向 `(8,2,6)`，垂直 FOV=60°。
 - 标题栏保留程序名称，并显示平均帧率（FPS）和平均帧间隔（ms/frame），约每 0.5 秒更新一次。按正常帧循环的墙钟时间及成功 present 的帧数统计，包含渲染资源等待，不将该值标为 GPU 独立耗时；初始化、最小化暂停和交换链重建耗时不计入统计。启动、暂停或重建后暂显示占位符，积累新样本后恢复数值。
@@ -156,9 +177,9 @@ CPU 为每个材质生成基础色与粗糙度纹理，宽高为根级 `textureS
 - 处理 framebuffer resize、交换链 out-of-date/suboptimal、最小化及恢复。零尺寸时暂停 GPU 渲染且继续处理窗口事件；非零尺寸恢复后重建相关资源。
 - 使用实际 framebuffer 尺寸而不是逻辑窗口尺寸处理投影、dispatch 和附件，适应高 DPI；画面覆盖全部客户区，不产生拉伸比例错误或未覆盖区域。
 
-## 七 路径积分与厚玻璃
+## 路径积分与厚玻璃
 
-### 1 采样与材质模型
+### 采样与材质模型
 
 每帧每像素生成 1 个新的主射线样本。使用像素身份、帧序号和采样维度构造确定性的随机序列；连续帧不能重复同一随机样本，分支不能错误共享所有维度。降噪历史不是继续累加同一个样本。
 
@@ -176,7 +197,7 @@ scene-linear RGB 中完成光照和 throughput 运算：
 
 环境为黑色，没有额外方向光、常量环境光、AO 乘数、预烘焙 GI 或人工补光。全部照明来自实际发光块与路径传播。
 
-### 2 玻璃介质与分支
+### 玻璃介质与分支
 
 玻璃体中的每段传播按实际长度 d 施加 `exp(-absorption * d)`。进入/离开由几何法线、射线方向和介质状态决定，不使用 shading normal 或材质名称推测边界方向。相机位于玻璃体内时必须正确初始化介质状态。
 
@@ -186,7 +207,7 @@ scene-linear RGB 中完成光照和 throughput 运算：
 
 常规 NEE 的直线 shadow ray 遇到玻璃即视为该直线连接被遮挡，不把折射体改成无方向变化的半透明 shadow。经过 delta 折射/反射实际命中发光面的路径仍按积分规则计能；不要求专门构造穿越玻璃的 manifold NEE，也不要求低采样下形成清晰焦散。
 
-### 3 直接光与重复计能
+### 直接光与重复计能
 
 直接可见、非 delta 的主表面使用第九节的 ReSTIR DI。镜面链或玻璃链后的终端、以及更深的非 delta 顶点使用自研发光面 NEE 与 BSDF 采样的 power-heuristic MIS，不在所有反弹上建立另一套 ReSTIR GI。
 
@@ -194,7 +215,7 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 光源选择 PDF、面积 PDF、方向 PDF 与几何项必须在相应 measure 下保持一致。相交使用与世界尺度相称、法线侧正确的射线偏移，避免自交而不跳过真实薄面。
 
-## 八 GPU wavefront 与路径队列
+## GPU wavefront 与路径队列
 
 实际渲染至少分为 primary、hit/shading、continuation/shadow、queue compaction、下一反弹参数生成和 resolve 阶段。具体可以合并兼容的 GPU pass，但不能将全部反弹藏在一个 raygen 的长循环中。
 
@@ -209,11 +230,11 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 初始化和窗口重建可重新分配容量。固定尺寸稳态复用路径、shadow、reservoir、guide、降噪 ping-pong buffer 和 command 资源，不逐帧创建/销毁 Vulkan 对象。
 
-## 九 自研 ReSTIR DI
+## 自研 ReSTIR DI
 
 本题范围固定为 **直接可见非 delta 主表面的发光面直接光**。镜中表面、玻璃后表面与后续反弹的直接光使用上一节规定的 NEE/MIS。ReSTIR 不重采样完整间接路径。
 
-### 1 光源域与候选
+### 光源域与候选
 
 从实际提取的暴露 emissive 三角形建立唯一 light table，删除的内部面不得继续充当光源。以三角形面积乘 emission 亮度建立非零光源功率 CDF；在选中的三角形上均匀采样面积。不同三角形拼成一个方块时不能重复计入同一发光面积。
 
@@ -221,7 +242,7 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 初始 reservoir 使用 `w = target / proposalPdf` 做 weighted reservoir sampling，保存选择的样本、weight sum、有效候选数 M 和归一化信息；零权重候选、空 reservoir 和零 target 的行为有明确数学定义，不产生 NaN。
 
-### 2 时间与空间复用
+### 时间与空间复用
 
 - Temporal reuse 将上一帧 reservoir 按无 jitter 相机和 primary 表面 guide 重投影。核对表面身份、材质、位置/深度与几何法线；遮挡揭露、投影变化、camera cut、resize 时按第十一节拒绝历史。
 - 上一 reservoir 的有效历史 multiplicity 上限为 32。缩减 M 时同步缩减代表的 weight sum，保持已有归一化意义；不能只改 M 再产生增亮。
@@ -232,9 +253,9 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 时间和空间 pass 的输入/输出以及跨帧 reservoir 必须分开或有明确的无 race 访问协议。Reset、离开/进入有效 primary 表面时同步处理 reservoir 内容和历史身份。ReSTIR 权重不可用任意亮度 clamp、最终乘常数或独立插值系数掩盖计能错误。
 
-## 十 SVGF 与光学信号分域
+## SVGF 与光学信号分域
 
-### 1 输出与 guide
+### 输出与 guide
 
 降噪前保存本帧新的、scene-linear HDR Monte Carlo 贡献。至少区分以下逻辑信号，可以共享物理存储但不能混用历史语义：
 
@@ -253,7 +274,7 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 链到达首个非 delta 表面、发光面或 miss 时形成终端。若超过路径预算、未得到有效终端或链拓扑与历史不一致，该信号不能声明历史有效。没有有效 guide 的贡献仍应计入本帧结果，不能通过丢弃 radiance 掩盖导引失败。
 
-### 2 SVGF 必需阶段
+### SVGF 必需阶段
 
 自行实现论文的 SVGF 核心流程，至少包括：
 
@@ -267,13 +288,13 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 时间历史保存 temporal 累积结果及其矩，不把最终 5 轮强空间模糊结果无限反馈到下一帧，避免递归过度模糊。SVGF 是有偏重建，不要求最终降噪图无偏；但不得通过更改原始积分贡献修补过滤错误。
 
-## 十一 平面镜 玻璃与历史生命周期
+## 平面镜 玻璃与历史生命周期
 
-### 1 普通表面
+### 普通表面
 
 静态几何使用同一世界表面位置和前一帧相机建立 motion，普通相机移动保留有效的局部历史。新揭露区域或不兼容表面只拒绝对应像素，不因为摄像机每帧移动就清空整幅图。
 
-### 2 平面镜与纯反射光学链
+### 平面镜与纯反射光学链
 
 支持预算内的平面镜链，包括可见镜间反射，不要求曲面镜。对每条纯 delta 反射链，将终端位置按反射面逆序反射到虚拟世界空间，终端法线以相同变换处理，再投影至前一帧无 jitter 相机建立反射空间 motion。不能用第一块镜面的实体位置 motion 或终端实体的普通投影代替。
 
@@ -281,7 +302,7 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 
 对首次玻璃拆分的反射分支，若至终端全部是纯平面反射，按同一反射空间规则处理；发生透射则采用下述透射规则。反射 guide 只指导过滤与重投影，不修改实际积分射线、Fresnel 或辐亮度。
 
-### 3 玻璃透射
+### 玻璃透射
 
 本题明确采用有界方案，不要求相机运动下的真实折射映射重投影：
 
@@ -291,13 +312,13 @@ ReSTIR 顶点的直接光由 reservoir estimator 独占：从该顶点的 BSDF c
 - 透射信号过滤必须拒绝不同玻璃轮廓、entry/exit 拓扑及不兼容终端，防止玻璃外背景、反射分支和玻璃内透射互相渗色。
 - 不能始终关闭透射域时间累积；静止观察的兼容像素应逐帧建立有效历史。也不能因玻璃存在或相机移动而清空普通表面、纯镜面和 ReSTIR 的全部历史。
 
-### 4 全局失效与帧所有权
+### 全局失效与帧所有权
 
 R/camera cut、framebuffer extent 变化、projection/FOV 变化或实际帧资源重新初始化时，所有相关 guide、reservoir、矩和 history length 同步失效。普通连续相机移动仅按各域局部规则处理。
 
 本帧输入历史、当前相机、上一相机与 reservoir/guide 的帧身份一致。只有成功提交的渲染工作才能推进前后帧配对；初始化、acquire 失败或跳过零尺寸帧不能伪造一份已渲染历史。历史必须来自真正完成或具有显式 GPU 顺序依赖的前一渲染帧，不能因为 CPU 使用双 frame slot 就默认 slot 中保存的恰好是上一帧。
 
-## 十二 GPU 同步 呈现与资源释放
+## GPU 同步 呈现与资源释放
 
 至少支持两个 CPU frame slot，不要求同时执行两份相互独立的成像历史。相邻帧的历史依赖可以在 GPU 上有序执行；稳态不使用全局 idle 代替资源同步。
 
@@ -321,7 +342,7 @@ Timeline semaphore 可管理 GPU 工作完成与资源回收；交换链 acquire
 
 仅 Debug 构建启用 Vulkan Validation Layer 的 core 和 synchronization validation，并要求校验层可用；warning、error 和诊断 message 按失败处理，INFO 仅记录，不关闭、过滤或修改验证层以掩盖问题。Release 构建不启用校验层，也不请求校验专用的 debug utils 扩展或创建 debug messenger，不要求安装校验层。编译器与 shader 编译器的 warning、error 和诊断 message 在所有构建模式下同样按失败处理，正常构建进度不属于诊断。
 
-## 十三 必需优化机制与禁止替代
+## 必需优化机制与禁止替代
 
 优化的验收是确认机制正确接入，不比较运行速度，也不要求证明某个优化在本机更快。
 
@@ -337,16 +358,16 @@ Timeline semaphore 可管理 GPU 工作完成与资源回收；交换链 acquire
 
 禁止静态截图、预生成帧、软件窗口绘制、离线烘焙光照、屏幕空间反射、传统光栅主可见性、单次直接光或随机模糊冒充本题。禁止空调用或从未消费的队列/descriptor/reservoir/方差数据冒充机制接入；禁止硬编码固定相机下的材质修补、曝光补偿或光照结果。
 
-## 十四 交付与验收
+## 交付与验收
 
-### 1 交付内容
+### 交付内容
 
 - 在当前测评工程中完成 C++ 与 GLSL 实现，保留随题 `materials.json` 作为运行时资源。
 - 提供简短实现说明，标明实际 pass 顺序、队列与分支容量依据、ReSTIR 归一化方案、SVGF guide/历史规则和同步/资源所有权。可写在 `IMPLEMENTATION.md`，不要求额外框架或自动验收工具。
 - 按已有工程入口进行与改动相称的构建及运行检查。Windows 使用 `windows-msvc-debug`/`windows-msvc-release`，Linux 使用 `linux-gcc-debug`/`linux-gcc-release`；目标平台声明为两者。
 - 哪个平台未构建、哪些交互检查未运行，必须如实说明；不能以一个平台成功声称完成两平台核验。
 
-### 2 验收方法
+### 验收方法
 
 以构建、代码审查和真实交互运行综合验收，不要求命令行采集或高 SPP 参考模式，不规定 FPS、内存或统计图像质量分数门槛。仅有截图或录屏不足以验证算法。
 
@@ -369,6 +390,6 @@ Timeline semaphore 可管理 GPU 工作完成与资源回收；交换链 acquire
 
 低采样本身允许残余噪声，特别是移动中的透射信号及未专门求解的焦散。本条不允许忽略持续重影、轮廓漏色、能量错误、漏算分支或未接入降噪；这些是机制正确性问题。判定是否完成仍以具体合同和实际代码/运行行为为依据。
 
-### 3 完成标准
+### 完成标准
 
 上述必选机制必须全部实现并接入实际渲染路径；构建和验证结果只是证据，不替代算法与行为要求。缺少某个机制时报告具体缺口，不通过降级路径、修改依赖/配置或删除验收条款将部分实现标为完整完成。

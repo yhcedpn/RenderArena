@@ -1,8 +1,8 @@
 // Vulkan 1.4 PBR RubikCube 场景渲染入口。
 // 运行时读取当前目录 materials.json；材质数值唯一来源为该文件。
 
-#include "config.h"
-#include "vulkan_engine.h"
+#include "config.hpp"
+#include "vulkan_engine.hpp"
 
 #include <cstdio>
 #include <cstdlib>

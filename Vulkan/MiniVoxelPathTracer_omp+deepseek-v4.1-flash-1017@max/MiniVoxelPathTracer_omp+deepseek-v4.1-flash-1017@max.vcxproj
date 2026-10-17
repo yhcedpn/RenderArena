@@ -1,14 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|x64">
-      <Configuration>Debug</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|x64">
-      <Configuration>Release</Configuration>
-      <Platform>x64</Platform>
-    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
@@ -23,71 +17,55 @@
     <PlatformToolset>v145</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <!-- VS 委托同一份 CMake 配置构建，避免两套依赖链接规则逐渐偏离。 -->
   <PropertyGroup>
-    <ArenaCMake>$(VSInstallDir)Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe</ArenaCMake>
-    <ArenaPreset Condition="'$(Configuration)'=='Debug'">windows-msvc-debug</ArenaPreset>
-    <ArenaPreset Condition="'$(Configuration)'=='Release'">windows-msvc-release</ArenaPreset>
-    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'!=''">$(VCPKG_ROOT)</ArenaVcpkgRoot>
-    <ArenaVcpkgRoot Condition="'$(VCPKG_ROOT)'==''">$(VSInstallDir)VC\vcpkg</ArenaVcpkgRoot>
-    <OutDir>$(ProjectDir)out\$(ArenaPreset)\$(Configuration)\</OutDir>
-    <IntDir>$(ProjectDir)out\$(ArenaPreset)\vs\</IntDir>
-    <NMakeBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
-cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration)</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>set "VCPKG_ROOT=$(ArenaVcpkgRoot)"
-cd /d "$(ProjectDir)" &amp;&amp; "$(ArenaCMake)" --preset $(ArenaPreset) &amp;&amp; "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --clean-first</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>cd /d "$(ProjectDir)" &amp;&amp; if exist "out\$(ArenaPreset)\CMakeCache.txt" "$(ArenaCMake)" --build "out\$(ArenaPreset)" --config $(Configuration) --target clean</NMakeCleanCommandLine>
-    <NMakeOutput>$(OutDir)MiniVoxelPathTracer.exe</NMakeOutput>
-    <NMakeIncludeSearchPath>$(ProjectDir);$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include;$(ProjectDir)out\$(ArenaPreset)\vcpkg_installed\x64-windows\include\vma;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
-    <AdditionalOptions>/std:c++20 %(AdditionalOptions)</AdditionalOptions>
-    <LocalDebuggerCommand>$(NMakeOutput)</LocalDebuggerCommand>
-    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
-    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+    <ArenaExecutable>MiniVoxelPathTracer</ArenaExecutable>
   </PropertyGroup>
+  <Import Project="..\..\cmake\RenderArena.props" />
   <ItemGroup>
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="materials.json" />
-    <None Include="MiniVoxelPathTracer_TASK.md" />
+    <ClInclude Include="rae_common.hpp" />
+    <ClInclude Include="rae_renderer.hpp" />
+    <ClInclude Include="rae_renderer_frame.hpp" />
+    <ClInclude Include="rae_renderer_resources.hpp" />
+    <ClInclude Include="rae_renderer_setup.hpp" />
+    <ClInclude Include="rae_scene.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\build_indirect.comp" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\composite.frag" />
+    <None Include="shaders\fullscreen.vert" />
+    <None Include="shaders\globals.glsl" />
+    <None Include="shaders\primary.comp" />
+    <None Include="shaders\primary.rchit" />
+    <None Include="shaders\primary.rmiss" />
+    <None Include="shaders\primary_info.comp" />
+    <None Include="shaders\restir_init.comp" />
+    <None Include="shaders\restir_shadow.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\scene.glsl" />
+    <None Include="shaders\shade.comp" />
+    <None Include="shaders\shadow.rahit" />
+    <None Include="shaders\shadow.rchit" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\shadow.rmiss" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\svgf_atrous.comp" />
+    <None Include="shaders\svgf_temporal.comp" />
+    <None Include="shaders\trace.rgen" />
     <None Include="AGENTS.md" />
     <None Include="CMakeLists.txt" />
     <None Include="CMakePresets.json" />
-    <None Include="platforms.json" />
-    <None Include="vcpkg.json" />
-    <None Include="vcpkg-configuration.json" />
     <None Include="IMPLEMENTATION.md" />
-    <None Include="shaders\common.glsl" />
-    <None Include="shaders\globals.glsl" />
-    <None Include="shaders\scene.glsl" />
-    <None Include="shaders\primary.comp" />
-    <None Include="shaders\primary_info.comp" />
-    <None Include="shaders\shade.comp" />
-    <None Include="shaders\shadow_resolve.comp" />
-    <None Include="shaders\build_indirect.comp" />
-    <None Include="shaders\restir_init.comp" />
-    <None Include="shaders\restir_temporal.comp" />
-    <None Include="shaders\restir_spatial.comp" />
-    <None Include="shaders\restir_shadow.comp" />
-    <None Include="shaders\svgf_temporal.comp" />
-    <None Include="shaders\svgf_atrous.comp" />
-    <None Include="shaders\composite.frag" />
-    <None Include="shaders\fullscreen.vert" />
-    <None Include="shaders\trace.rgen" />
-    <None Include="shaders\shadow.rgen" />
-    <None Include="shaders\primary.rmiss" />
-    <None Include="shaders\shadow.rmiss" />
-    <None Include="shaders\primary.rchit" />
-    <None Include="shaders\shadow.rahit" />
-    <None Include="shaders\shadow.rchit" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="rae_common.hpp" />
-    <ClInclude Include="rae_scene.hpp" />
-    <ClInclude Include="rae_renderer.hpp" />
-    <ClInclude Include="rae_renderer_setup.hpp" />
-    <ClInclude Include="rae_renderer_resources.hpp" />
-    <ClInclude Include="rae_renderer_frame.hpp" />
+    <None Include="MiniVoxelPathTracer_TASK.md" />
+    <None Include="materials.json" />
+    <None Include="platforms.json" />
+    <None Include="shaders\.gitkeep" />
+    <None Include="vcpkg-configuration.json" />
+    <None Include="vcpkg.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

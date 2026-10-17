@@ -52,3 +52,7 @@ Acquire 使用 frame-slot binary semaphore；present semaphore 按交换链图�
 - 复制部署中的合法配置改为绿色墙、roughness=0.4、IOR=1.6、新吸收与半强度 emission，重启成功，实际墙色和照明发生变化；该进程从答卷根目录启动，仍读取自身部署目录资源，验证了资源路径不依赖工作目录。
 - 临时退出 readback/AUDIT 已从交付源代码移除。核验日志保存在 out/optical-audit.log、out/mirror-audit.log、out/config-checks/results.json 及 out/final-release-clean.log、out/legal-material-run.log；截图只是交互证据，不参与渲染。
 - Linux 未构建或运行：本次为 Windows 主机，未提供 Linux 执行环境。Linux 构建及交互仍需在该平台核验；本实现采用 GLFW、标准 C++ 文件/时间接口与条件 CRT PATH 读取，未用 Win32 窗口/文件 API。
+
+## 工程整理（2026-10-17）
+
+VS 与命令行统一委托共享 CMake 预设，输出改为 `bin/<预设>/` 和 `obj/<预设>/`。两种 Windows 配置通过构建；上文 `out/` 路径属于历史核验记录，该旧目录已在本次工程清理中删除。

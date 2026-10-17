@@ -1,23 +1,15 @@
 cmake_minimum_required(VERSION 3.28)
 
+include(../../cmake/Vcpkg.cmake)
 project(RubikCube LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+include(../../cmake/RenderArena.cmake)
 
-# 输出目录统一，便于运行时找到 materials.json
-set(RUBIK_RUNTIME_OUTPUT ${CMAKE_BINARY_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${RUBIK_RUNTIME_OUTPUT})
 
-# 依赖统一使用 vcpkg 导出的目标，保持本地与 CI 的链接契约一致。
+# 依赖统一使用 vcpkg 导出的目标，保持 VS 与命令行的链接契约一致。
 
-# Vulkan headers + loader
-find_package(Vulkan REQUIRED)
-# 功能代码使用 Vulkan 1.4 核心接口，不能用更旧的 headers 编译。
-if(Vulkan_VERSION VERSION_LESS 1.4)
-    message(FATAL_ERROR "需要 Vulkan headers >= 1.4，当前 ${Vulkan_VERSION}")
-endif()
+# Vulkan headers：函数由 volk 从系统驱动动态加载
+find_package(VulkanHeaders 1.4 CONFIG REQUIRED)
 
 # volk：函数加载（不链接 libvulkan 与 volk 符号冲突由 config 处理）
 set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)

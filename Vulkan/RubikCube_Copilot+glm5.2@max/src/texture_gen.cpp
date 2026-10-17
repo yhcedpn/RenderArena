@@ -1,4 +1,4 @@
-#include "texture_gen.h"
+#include "texture_gen.hpp"
 
 #include <cmath>
 #include <algorithm>

@@ -29,12 +29,6 @@
 #include <filesystem>
 #include "shaders.inc"
 
-#if defined(_WIN32)
-#pragma comment(lib, "glfw3dll.lib")
-#pragma comment(lib, "vulkan-1.lib")
-#pragma comment(lib, "volk.lib")
-#endif
-
 namespace {
 
 using Json = nlohmann::json;

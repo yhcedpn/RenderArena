@@ -1,33 +1,22 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="源文件">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-    <Filter Include="头文件">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
-    </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
-    </Filter>
+    <Filter Include="源文件"><UniqueIdentifier>{bd32127c-1173-55a4-88b7-da0f4de24df4}</UniqueIdentifier></Filter>
+    <Filter Include="头文件"><UniqueIdentifier>{eb680bd0-e331-500b-8074-b4f961dbf240}</UniqueIdentifier></Filter>
+    <Filter Include="资源文件"><UniqueIdentifier>{5aaaba4d-b8c2-5dea-a36c-b2a8b6ec5c34}</UniqueIdentifier></Filter>
   </ItemGroup>
   <ItemGroup>
-    <None Include="materials.json">
-      <Filter>资源文件</Filter>
-    </None>
-    <None Include="RubikCube_TASK.md">
-      <Filter>资源文件</Filter>
-    </None>
-    <None Include="shaders.inc">
-      <Filter>源文件</Filter>
-    </None>
+    <ClCompile Include="main.cpp"><Filter>源文件</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
+    <None Include="shaders.inc"><Filter>源文件</Filter></None>
+    <None Include="AGENTS.md"><Filter>资源文件</Filter></None>
+    <None Include="CMakeLists.txt"><Filter>资源文件</Filter></None>
+    <None Include="CMakePresets.json"><Filter>资源文件</Filter></None>
+    <None Include="RubikCube_TASK.md"><Filter>资源文件</Filter></None>
+    <None Include="materials.json"><Filter>资源文件</Filter></None>
+    <None Include="platforms.json"><Filter>资源文件</Filter></None>
+    <None Include="vcpkg-configuration.json"><Filter>资源文件</Filter></None>
+    <None Include="vcpkg.json"><Filter>资源文件</Filter></None>
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-#include "vulkan_engine.h"
+#include "vulkan_engine.hpp"
 
 #include <shaderc/shaderc.hpp>
 #include <shaderc/env.h>
@@ -56,7 +56,13 @@ void VulkanEngine::init(const Config& cfg) {
 
     // 自动验证钩子：RUBIK_DUMP 环境变量设置时，第 30 帧转储交换链图像到 PPM。
     // 必须在 createSwapchain 之前读取，以便交换链图像带上 HOST_TRANSFER usage。
+#if defined(_MSC_VER)
+    size_t dumpEnvSize = 0;
+    getenv_s(&dumpEnvSize, nullptr, 0, "RUBIK_DUMP");
+    dumpFrame_ = dumpEnvSize > 0;
+#else
     if (std::getenv("RUBIK_DUMP")) dumpFrame_ = true;
+#endif
 
     // 1. 生成所有材质纹理（CPU 端，确定性）
     textures_.reserve(cfg.materials.size());
@@ -205,7 +211,6 @@ void cursorPosCallback(GLFWwindow* w, double x, double y) {
         eng->camera_.pitch += float(dy * 0.01);
     } else if (eng->panning_) {
         // 右键：平移 target（沿相机右向和上向，按距离缩放使远近一致）
-        float cp = std::cos(eng->camera_.pitch);
         // 相机右向 = (cos(yaw),0,-sin(yaw))；上向近似 (−sin(pitch)cos(yaw), cos(pitch), −sin(pitch)sin(yaw))
         float rx = std::cos(eng->camera_.yaw), rz = -std::sin(eng->camera_.yaw);
         float ux = -std::sin(eng->camera_.pitch) * std::cos(eng->camera_.yaw);
@@ -924,7 +929,7 @@ void VulkanEngine::transitionImageLayout(VkCommandBuffer cmd, VkImage img, VkFor
 // 核心 1.4 API：vkCopyMemoryToImage(VkDevice, const VkCopyMemoryToImageInfo*)。
 //
 // 经 vk.xml 1.4 核心规范确认：核心 1.4 不提供专门的 usage 位、布局或访问位
-// （见 vulkan14_host_image_copy_compat.h 说明）。只需启用 hostImageCopy 设备特性，
+// （见 vulkan14_host_image_copy_compat.hpp 说明）。只需启用 hostImageCopy 设备特性，
 // 图像 usage 用常规 SAMPLED|TRANSFER_DST，目标布局用 VK_IMAGE_LAYOUT_GENERAL，
 // 主机写访问用 VK_ACCESS_2_HOST_WRITE_BIT，拷贝完成后转 SHADER_READ_ONLY_OPTIMAL。
 void VulkanEngine::uploadTextureHostImageCopy(const PixelTextures& px, VkFormat baseFmt,
@@ -1533,7 +1538,12 @@ void VulkanEngine::dumpSwapchainImage(uint32_t imageIndex) {
     // 交换链格式可能是 B8G8R8A8_SRGB，转成 R8G8B8 写 PPM
     const bool isBGRA = (swapchainFormat_ == VK_FORMAT_B8G8R8A8_SRGB ||
                          swapchainFormat_ == VK_FORMAT_B8G8R8A8_UNORM);
-    std::FILE* f = std::fopen("rubik_frame.ppm", "wb");
+    std::FILE* f = nullptr;
+#if defined(_MSC_VER)
+    fopen_s(&f, "rubik_frame.ppm", "wb");
+#else
+    f = std::fopen("rubik_frame.ppm", "wb");
+#endif
     if (!f) { std::fprintf(stderr, "无法写 rubik_frame.ppm\n"); return; }
     std::fprintf(f, "P6\n%u %u\n255\n", w, h);
     for (uint32_t y = 0; y < h; ++y) {

@@ -1,17 +1,35 @@
-# VoxelPBRFrustumCulling
+# VoxelPBRFrustumCulling 测评任务
+
+| 项目 | 要求 |
+| --- | --- |
+| 图形 API | OpenGL 4.6 Core Profile |
+| 语言 | C++20；C 辅助代码为 C17 |
+| 输入资源 | 当前目录的 `materials.json` |
+| 平台 | 以当前目录 `platforms.json` 为准 |
+
+## 测评边界与构建
+
+- 所有显式文件操作和 shell 工作目录限定在当前任务目录及其子目录。只读取随题提供的规范、题面、构建配置、资源、当前答卷源码和本轮生成物。
+- 禁止读取或搜索上级目录、其他答卷、Git 历史、其他会话、既有实现说明、评审、截图和历史运行日志；禁止联网、外部资料连接器、子代理和派生会话。
+- 可以调用已安装的构建及运行工具；工具内部读取系统库、共享构建配置和已安装依赖不属于主动越界读取。依赖由组织者准备，测评期间不得安装或更改依赖。
+- 保持题面、`materials.json`、既有工程设置和依赖声明不变；只允许为新增文件添加 VS 项目及 filter 引用行。
+- C++ 使用 C++20、`.cpp/.hpp`；确需 C 时使用 C17、`.c/.h`，不混用语言后缀。shader 使用独立的 GLSL 文件或题面明确允许的包含资源。
+- 使用当前目录预设分别构建 Debug 和 Release：`cmake --preset windows-msvc-debug`、`cmake --build --preset windows-msvc-debug`；Release 对应 `windows-msvc-release`。Linux 对应 `linux-gcc-debug/release`，平台以 `platforms.json` 为准。
+- 程序和运行资源输出至 `bin/<预设>/`，CMake 中间文件与依赖安装在 `obj/<预设>/`。编译器、shader 编译器及运行校验诊断按失败处理，不得屏蔽。
+- 交付源码、shader 和必要资源，在 `IMPLEMENTATION.md` 记录实现机制、实际构建与运行结果、具体缺口；Git 操作由组织者负责。
 
 ## 目标
 
 创建一个可运行的 Visual Studio C++ OpenGL 项目，渲染一个类似 Minecraft 的像素风格方块场景。场景必须同时展示基于物理的材质、程序化像素纹理、实时光照与阴影、实例化绘制，以及可观察和可验证的 CPU 视锥剔除。
 
-程序必须使用 C++、GLFW、GLAD、GLM 和 nlohmann-json，以 OpenGL 4.6 core profile 为目标。所有几何与纹理都必须在代码中程序化生成，不得依赖外部图片、模型、字体或 HDR 环境贴图。任务目录内预先提供的 `materials.json` 是唯一材质数据源；GLSL shader 必须作为独立文本文件加载，禁止嵌入任何 C++ 源文件或头文件。
+程序必须使用 C++20、GLFW、GLAD、GLM 和 nlohmann-json，以 OpenGL 4.6 core profile 为目标。所有几何与纹理都必须在代码中程序化生成，不得依赖外部图片、模型、字体或 HDR 环境贴图。任务目录内预先提供的 `materials.json` 是唯一材质数据源；GLSL shader 必须作为独立文本文件加载，禁止嵌入任何 C++ 源文件或头文件。
 
 任务重点是考察模型能否在保持鲜明像素风格的同时，正确实现 Cook-Torrance PBR、线性颜色工作流、shadow mapping、实例数据管理和保守的 frustum culling，而不是仅用普通漫反射光照模拟金属与塑料。
 
 ## 要求输出
 
 将完成后的项目放在当前目录下。
-`main.cpp` 必须作为程序主体，包含程序入口以及初始化、主循环和清理流程的主要组织逻辑。允许模型自行增加 `*.h`、`*.hpp`、`*.cpp`、shader 等辅助文件，也允许自行决定这些文件在当前项目内的名称和目录结构；所有产物都必须位于当前结果目录或其子目录中。
+`main.cpp` 必须作为程序主体，包含程序入口以及初始化、主循环和清理流程的主要组织逻辑。允许模型自行增加 `*.hpp`、`*.cpp`、shader 等辅助文件，也允许自行决定这些文件在当前项目内的名称和目录结构；所有产物都必须位于当前结果目录或其子目录中。
 
 所有 shader 源码必须存放在一个或多个独立的 UTF-8 文本文件中，由程序运行时读取。不得把完整或分段的 GLSL 源码、拼接 GLSL 的字符串片段、压缩/编码后的 GLSL，或用于运行时生成 shader 文件的模板集成到 `main.cpp`、其他 `*.cpp` 或任何头文件中。
 
@@ -24,7 +42,7 @@
 - 使用 GLAD 加载 OpenGL 函数。
 - 使用 GLM 完成向量、矩阵、相机和 frustum 数学。
 - 使用 nlohmann-json 读取和校验预置的材质 JSON。
-- 可在 Visual Studio / MSBuild 的 `Debug|x64` 配置下构建运行。
+- 可在 Visual Studio / MSBuild 的 `Debug|x64` 和 `Release|x64` 配置下构建运行。
 
 ## 场景布局
 
@@ -132,9 +150,8 @@
 
 ## 约束
 
-- **绝对禁止**以任何形式读取、写入或查找上级目录内的文件，包括调用工具和执行命令两种形式。
 - 所有产物**必须**放在当前目录中，不可以在任何别处。
-- 使用当前目录的 `vcpkg.json` 和 `vcpkg_installed/`。
+- 使用当前目录的 `vcpkg.json`，依赖由构建入口安装在 `obj/<预设>/vcpkg_installed/`。
 - 不得修改 `vcpkg.json`、triplets、overlays、installed tree、`.vcxproj`、`.vcxproj.filters` 或 `.vcxproj.user`，除非是为项目增加头文件，源文件或资源文件的引用。
 - 除当前项目内预置的 `materials.json` 和模型创建的独立 shader 文本外，不得下载或加载外部 texture、model、font、cubemap、HDR map、shader include 或其他资产。
 - 不得使用 `GL_NV_command_list`、bindless graphics、mesh shader、ray tracing API、Vulkan、Direct3D、CUDA、OptiX 或任何厂商专属 OpenGL 扩展。
@@ -143,7 +160,7 @@
 
 ## 验收标准
 
-- 能在 Visual Studio / MSBuild 的 `Debug|x64` 配置下构建并运行。
+- 能在 Visual Studio / MSBuild 的 `Debug|x64` 和 `Release|x64` 配置下构建并运行。
 - 打开可见的 `1280 x 720` 窗口，并正确创建 OpenGL 4.6 core profile 上下文，失败时给出清晰错误。
 - 场景严格包含 `250` 个共享 cube mesh 的实例，布局、材质和柱高符合本任务定义。
 - 最终画面有清晰的低分辨率像素轮廓，最近邻放大正确；两种材质纹理均严格为 32×32，不依赖任何外部资产。

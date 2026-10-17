@@ -1,13 +1,8 @@
 {
   "dependencies": [
     "glfw3",
-    "shaderc",
-    "spirv-reflect",
-    "spirv-tools",
     "volk",
-    "vulkan",
-    "vulkan-memory-allocator",
-    "vulkan-utility-libraries",
+    "vulkan-headers",
     "nlohmann-json"
   ]
 }
