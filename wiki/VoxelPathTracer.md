@@ -1,6 +1,6 @@
 # VoxelPathTracer
 
-使用 C++20、GLSL 460 和 Vulkan 1.4 实现静态体素展厅，要求硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF，以及平面镜反射与厚玻璃透射的分域历史。
+体素展厅路径追踪任务，涉及 GPU wavefront（波前调度）、ReSTIR DI、SVGF，以及镜面与厚玻璃的分域历史。具体要求见题面。
 
 ## 工程与规格
 
@@ -12,4 +12,4 @@
 | [任务 AGENTS.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md) | 工程入口、修改边界与部署映射 |
 | [通用 AGENTS.md](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md) | 测评隔离、工程约定与交付规则 |
 
-[构建指南](https://github.com/yhcedpn/RenderArena/wiki/Home#构建)说明依赖准备与 Debug/Release 构建步骤。目标平台声明为 Windows、Linux；依赖及版本以答卷的 `vcpkg.json` 为准。
+[构建指南](https://github.com/yhcedpn/RenderArena/wiki/Home#构建)提供依赖准备和构建步骤；目标平台与依赖分别见工程目录的 `platforms.json`、`vcpkg.json`。

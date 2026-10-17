@@ -1,10 +1,11 @@
 # RenderArena Wiki
 
-RenderArena 的项目介绍与工程入口见 [README](https://github.com/yhcedpn/RenderArena/blob/main/README.md)。本页提供构建步骤和任务导航。
+RenderArena 用 C++ 图形编程任务比较模型的渲染与工程实现。本页提供构建指南和任务导航。
 
-## 当前任务
+## 任务索引
 
-[VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer)：Vulkan 1.4 体素展厅，要求硬件路径追踪、GPU wavefront、ReSTIR DI、SVGF 和镜面/玻璃分域历史。题面与实现说明入口见任务页。
+- [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)
+- [OpenGL 任务（历史）](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)
 
 ## 构建
 
@@ -18,7 +19,7 @@ RenderArena 的项目介绍与工程入口见 [README](https://github.com/yhcedp
 cmake "-DARENA_TASK_DIR=Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max" -P cmake/PrepareDependencies.cmake
 ```
 
-各答卷的 `vcpkg.json` 锁定依赖和 baseline。脚本把依赖安装到该答卷的 `obj/dependencies/<主机平台>/`，同树包含 Debug/Release；临时构建目录为仓库根 `obj/vcpkg/<项目路径哈希>/<主机平台>/`。二进制缓存使用 vcpkg 用户级共享缓存或显式设置的 `VCPKG_BINARY_SOURCES`。
+依赖与版本由答卷的 `vcpkg.json` 声明。安装目录由[依赖准备脚本](https://github.com/yhcedpn/RenderArena/blob/main/cmake/PrepareDependencies.cmake)与构建预设约定；二进制缓存使用 vcpkg 用户级共享缓存或显式设置的 `VCPKG_BINARY_SOURCES`。
 
 依赖准备完成后，测评构建只消费已安装依赖；缺项由组织者补齐。实现智能体的操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
 
@@ -56,7 +57,7 @@ Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`�
 
 可执行文件、DLL 和运行资源位于任务目录 `bin/<预设>/`；应用中间文件位于 `obj/<预设>/`，依赖安装树与应用配置目录分开。VS 调试器从对应产物目录启动程序。
 
-当前目标可执行文件为 Windows 的 `VoxelPathTracer.exe` 或 Linux 的 `VoxelPathTracer`。`materials.json` 部署到可执行文件同目录；独立 stage shader 在构建时编译到 `shaders/<相对源文件名>.spv`。部署映射见[任务执行规范](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。
+VoxelPathTracer 的程序名与资源部署映射见[任务执行规范“构建与运行入口”](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。从产物目录启动对应程序。
 
 构建、算法和交互的完成条件分别见题面“交付与验收”，核验记录见答卷的 [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md)。
 
@@ -64,11 +65,11 @@ Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`�
 
 以下页面提供历史答卷的来源与文档入口；源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。
 
-- [OpenGL 任务](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)：VoxelPBRFrustumCulling。
-- [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)：RubikCube、MiniVoxelPathTracer。
+- [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling)
+- [RubikCube](https://github.com/yhcedpn/RenderArena/wiki/RubikCube)
+- [MiniVoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/MiniVoxelPathTracer)
 
 ## 文档维护
 
-- 当前工程入口以 `RenderArena.slnx` 为准；新增答卷的平台和构建配置由答卷目录声明。
 - 文档职责与同题题面维护规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。
-- Wiki 源文件位于仓库 `wiki/`。[Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)在 `main` 上的 `wiki/**` 或同步工作流文件变更时运行，也支持 `workflow_dispatch` 手动触发。同步以 `wiki/` 为准，包含删除页面；没有内容变化时跳过提交。
+- Wiki 源文件位于仓库 `wiki/`，修改后由 [Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)同步到 GitHub Wiki。触发条件见工作流配置。
