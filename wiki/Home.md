@@ -22,7 +22,7 @@ RenderArena 用固定的 C++ 图形编程任务比较模型在渲染算法、资
 
 ### 组织者准备依赖
 
-1. Windows 预设，推荐使用 MSVC v145：需要安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载、MSVC v145 和 Windows SDK；命令行 CMake ≥ 3.28，且需支持 `Visual Studio 18 2026` 生成器（已核验 4.3.1）。
+1. Windows 预设，推荐使用 MSVC v145：安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载、MSVC v145 和 Windows SDK；命令行 CMake ≥ 3.28，且需支持 `Visual Studio 18 2026` 生成器（已核验 4.3.1）。
 2. Linux 预设使用 GCC：安装 CMake ≥ 3.28、Ninja、GCC，以及 vcpkg 需要的 `git`、`curl`、`zip`、`unzip`、`tar` 和 `pkg-config`；使用 X11/Wayland 窗口时还需对应开发包。
 3. 设置 `VCPKG_ROOT` 指向已安装的 vcpkg。按题面准备图形 API 工具链，例如 Vulkan 的 `glslc` 可通过 `PATH` 或 `VULKAN_SDK` 定位。
 4. 从仓库根目录执行依赖准备脚本：
@@ -102,9 +102,4 @@ RenderArena/
 | `CMakeLists.txt`、`CMakePresets.json` | 构建入口，引用共享预设 |
 | `bin/`、`obj/` | 构建产物、中间文件和依赖安装树 |
 
-答卷目录以 `<题目>_<工具>+<模型>` 开头，例如 `Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max`；当前只有 `Vulkan/`，OpenGL 答卷目录在收录后建立。
-
-## 文档维护
-
-- 任务规范位于 `Tasks/`，任务页的题面链接指向该目录；答卷目录保留同文副本。修订与同步规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。
-- Wiki 源文件位于仓库 `wiki/`，修改后由 [Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)同步到 GitHub Wiki。触发条件见工作流配置。
+答卷目录以 `<题目>_<工具>+<模型>^<思考挡位>` 格式命名，例如 `Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max`。
