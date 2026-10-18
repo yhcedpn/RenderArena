@@ -1,34 +1,46 @@
 # RenderArena Wiki
 
-RenderArena 用 C++ 图形编程任务比较模型的渲染与工程实现。本页提供构建指南和任务导航。
+RenderArena 用固定的 C++ 图形编程任务比较模型在渲染算法、资源管理、工程实现与实际性能上的表现。本页说明评测方式、通用构建命令和项目结构。
 
-## 任务索引
+## 测什么
 
-- [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)
-- [OpenGL 任务（历史）](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)
+- 每道题给出固定的功能与资源规格、依赖配置和构建入口；答卷从零实现完整程序，而不是补全模板。
+- 验收关注规定机制是否接入实际调用路径。构建通过、截图相似或出现算法名称都不能替代机制本身，具体判据见题面的“交付与验收”。
+- 题面规范保存在 `Tasks/`；源码、工程配置和实现说明按答卷组织。
+
+## 怎么比
+
+- **同一题面**：同一道题的不同答卷使用相同题面和工程配置，便于横向比较。
+- **隔离执行**：测评智能体只读取题面、任务目录和预装依赖，不使用子代理、不读取其他答卷或历史结果。
+- **固定构建**：组织者按任务目录预设构建实际运行平台的 Debug 和 Release 产物；编译器、shader 编译器和运行时校验的诊断按失败处理。
+- **综合验收**：结论来自构建、源码审查和真实交互运行；未核验的平台和交互项必须明确列出。
+- **证据留存**：答卷的 `IMPLEMENTATION.md` 记录实现机制、适用版本与环境、实际核验结果和未完成项。
 
 ## 构建
 
+以下命令适用于所有任务；`<任务目录>` 指具体答卷目录，例如 `Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max`。任务特有的运行要求和资源映射见题面与任务目录 `AGENTS.md`。
+
 ### 组织者准备依赖
 
-1. Windows 安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载、MSVC v145 和 Windows SDK；CMake 需支持 `Visual Studio 18 2026` 生成器。Linux 安装 CMake ≥ 3.28、Ninja 和 GCC。
-2. 设置 `VCPKG_ROOT` 指向已安装的 vcpkg。提供 Vulkan SDK 的 `glslc`，可通过 `PATH` 或 `VULKAN_SDK` 定位。运行渲染器所需设备能力与校验层要求见[题面](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/VoxelPathTracer_TASK.md)。
-3. 从仓库根目录执行依赖准备脚本：
+1. Windows 预设，推荐使用 MSVC v145：安装 Visual Studio 2026 的“使用 C++ 的桌面开发”工作负载、MSVC v145 和 Windows SDK；命令行 CMake ≥ 3.28，且需支持 `Visual Studio 18 2026` 生成器（已核验 4.3.1）。
+2. Linux 预设使用 GCC：安装 CMake ≥ 3.28、Ninja、GCC，以及 vcpkg 需要的 `git`、`curl`、`zip`、`unzip`、`tar` 和 `pkg-config`；使用 X11/Wayland 窗口时还需对应开发包。
+3. 设置 `VCPKG_ROOT` 指向已安装的 vcpkg。按题面准备图形 API 工具链，例如 Vulkan 的 `glslc` 可通过 `PATH` 或 `VULKAN_SDK` 定位。
+4. 从仓库根目录执行依赖准备脚本：
 
 ```powershell
-cmake "-DARENA_TASK_DIR=Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max" -P cmake/PrepareDependencies.cmake
+cmake "-DARENA_TASK_DIR=<任务目录>" -P cmake/PrepareDependencies.cmake
 ```
 
 依赖与版本由答卷的 `vcpkg.json` 声明。安装目录由[依赖准备脚本](https://github.com/yhcedpn/RenderArena/blob/main/cmake/PrepareDependencies.cmake)与构建预设约定；二进制缓存使用 vcpkg 用户级共享缓存或显式设置的 `VCPKG_BINARY_SOURCES`。
 
-依赖准备完成后，测评构建只消费已安装依赖；缺项由组织者补齐。实现智能体的操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
+测评的依赖准备与操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
 
 ### 配置与构建
 
 进入任务目录：
 
 ```powershell
-cd "Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max"
+cd "<任务目录>"
 ```
 
 Windows 分别配置并构建 Debug、Release：
@@ -49,27 +61,45 @@ cmake --preset linux-gcc-release
 cmake --build --preset linux-gcc-release
 ```
 
-平台适用性以任务目录 `platforms.json` 为准。预设定义见[根目录 CMakePresets.json](https://github.com/yhcedpn/RenderArena/blob/main/CMakePresets.json)，任务目录引用共享预设；语言标准和编译诊断设置见 [RenderArena.cmake](https://github.com/yhcedpn/RenderArena/blob/main/cmake/RenderArena.cmake)。
+平台适用性以任务目录 `platforms.json` 为准；Linux 预设仅在 Linux 主机上可用，预设按 `hostSystemName` 过滤。预设定义见[根目录 CMakePresets.json](https://github.com/yhcedpn/RenderArena/blob/main/CMakePresets.json)，任务目录引用共享预设；语言标准和编译诊断设置见 [RenderArena.cmake](https://github.com/yhcedpn/RenderArena/blob/main/cmake/RenderArena.cmake)。
 
 Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`。VS 项目委托相同 CMake 预设；未设置 `VCPKG_ROOT` 时，VS 入口使用随 VS 安装的 vcpkg。依赖仍需先按上述步骤准备。
 
 ### 运行与产物
 
-可执行文件、DLL 和运行资源位于任务目录 `bin/<预设>/`；应用中间文件位于 `obj/<预设>/`，依赖安装树与应用配置目录分开。VS 调试器从对应产物目录启动程序。
+可执行文件、DLL 和运行资源位于任务目录 `bin/<预设>/`；中间文件位于 `obj/<预设>/`，依赖安装树与应用配置目录分开。程序名、资源部署、校验层和设备能力要求见题面与任务目录 `AGENTS.md`。
 
-VoxelPathTracer 的程序名与资源部署映射见[任务执行规范“构建与运行入口”](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。从产物目录启动对应程序。
+常见失败：
 
-构建、算法和交互的完成条件分别见题面“交付与验收”，核验记录见答卷的 [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md)。
+| 现象 | 处理 |
+| --- | --- |
+| 配置时报找不到 vcpkg 工具链 | 设置 `VCPKG_ROOT`，或在 Visual Studio 中安装 vcpkg 组件 |
+| 构建时报找不到图形 API 工具链 | 按题面安装 SDK 并加入 `PATH`，例如 Vulkan 的 `glslc` |
 
-## 历史答卷
+## 测评项目结构
 
-以下页面提供历史答卷的来源与文档入口；源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。
+```text
+RenderArena/
+├─ Tasks/                 # 题面规范：<题目>_TASK.md
+├─ Vulkan/                # Vulkan 答卷目录
+├─ cmake/                 # 共享构建配置、依赖准备、shader 编译和诊断设置
+├─ wiki/                  # Wiki 源文件，推送 main 后同步
+├─ CMakePresets.json      # Debug/Release 预设
+├─ RenderArena.slnx       # Visual Studio 解决方案入口
+└─ AGENTS.md              # 通用执行规范
+```
 
-- [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling)
-- [RubikCube](https://github.com/yhcedpn/RenderArena/wiki/RubikCube)
-- [MiniVoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/MiniVoxelPathTracer)
+每份答卷是独立工程：
 
-## 文档维护
+| 路径 | 内容 |
+| --- | --- |
+| `main.cpp`、`src/` | C++ 源码 |
+| `shaders/` | shader 源文件 |
+| `*_TASK.md` | 题面副本；规范文本在 `Tasks/` |
+| `AGENTS.md` | 任务执行规范、修改边界与运行入口 |
+| `IMPLEMENTATION.md` | 实现机制、环境和核验记录 |
+| `vcpkg.json`、`platforms.json` | 依赖锁定与目标平台 |
+| `CMakeLists.txt`、`CMakePresets.json` | 构建入口，引用共享预设 |
+| `bin/`、`obj/` | 构建产物、中间文件和依赖安装树 |
 
-- 文档职责与同题题面维护规则见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#文档职责)。
-- Wiki 源文件位于仓库 `wiki/`，修改后由 [Sync Wiki 工作流](https://github.com/yhcedpn/RenderArena/blob/main/.github/workflows/sync-wiki.yml)同步到 GitHub Wiki。触发条件见工作流配置。
+答卷目录以 `<题目>_<工具>+<模型>^<思考挡位>` 格式命名，例如 `Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max`。
