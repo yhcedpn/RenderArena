@@ -8,7 +8,7 @@
 | --- | --- |
 | [工程目录](https://github.com/yhcedpn/RenderArena/tree/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max) | omp + deepseek-v4.1-flash-1017^max 答卷 |
 | [VoxelPathTracer_TASK.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/VoxelPathTracer_TASK.md) | 功能、资源语义与验收标准 |
-| [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md) | 实现机制与构建、运行核验记录 |
+| [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md) | 渲染算法、资源管理与实现机制 |
 | [任务 AGENTS.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md) | 工程入口、修改边界与部署映射 |
 | [通用 AGENTS.md](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md) | 测评隔离、工程约定与交付规则 |
 

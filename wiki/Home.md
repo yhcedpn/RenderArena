@@ -4,10 +4,14 @@ RenderArena 用 C++ 图形编程任务比较模型的渲染与工程实现。本
 
 ## 任务索引
 
-- [Vulkan 任务](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks)
-- [OpenGL 任务（历史）](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks)
+| 图形 API | 任务 |
+| --- | --- |
+| [Vulkan](https://github.com/yhcedpn/RenderArena/wiki/Vulkan-BenchmarkTasks) | [VoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/VoxelPathTracer)、[RubikCube](https://github.com/yhcedpn/RenderArena/wiki/RubikCube)、[MiniVoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/MiniVoxelPathTracer) |
+| [OpenGL](https://github.com/yhcedpn/RenderArena/wiki/OpenGL-BenchmarkTasks) | [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling) |
 
 ## 构建
+
+以下步骤以 VoxelPathTracer 工程为例，其他任务的构建入口见各自的工程配置。
 
 ### 组织者准备依赖
 
@@ -21,7 +25,7 @@ cmake "-DARENA_TASK_DIR=Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max"
 
 依赖与版本由答卷的 `vcpkg.json` 声明。安装目录由[依赖准备脚本](https://github.com/yhcedpn/RenderArena/blob/main/cmake/PrepareDependencies.cmake)与构建预设约定；二进制缓存使用 vcpkg 用户级共享缓存或显式设置的 `VCPKG_BINARY_SOURCES`。
 
-依赖准备完成后，测评构建只消费已安装依赖；缺项由组织者补齐。实现智能体的操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
+测评的依赖准备与操作范围见[通用执行规范](https://github.com/yhcedpn/RenderArena/blob/main/AGENTS.md#测评隔离)。
 
 ### 配置与构建
 
@@ -59,15 +63,7 @@ Windows 也可打开 `RenderArena.slnx`，选择 `Debug|x64` 或 `Release|x64`�
 
 VoxelPathTracer 的程序名与资源部署映射见[任务执行规范“构建与运行入口”](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/AGENTS.md#构建与运行入口)。从产物目录启动对应程序。
 
-构建、算法和交互的完成条件分别见题面“交付与验收”，核验记录见答卷的 [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md)。
-
-## 历史答卷
-
-以下页面提供历史答卷的来源与文档入口；源码与题面固定链接到提交 [`e6249c9`](https://github.com/yhcedpn/RenderArena/tree/e6249c90946b758e1aab3885e6c50e70ec6f7ef1)。
-
-- [VoxelPBRFrustumCulling](https://github.com/yhcedpn/RenderArena/wiki/VoxelPBRFrustumCulling)
-- [RubikCube](https://github.com/yhcedpn/RenderArena/wiki/RubikCube)
-- [MiniVoxelPathTracer](https://github.com/yhcedpn/RenderArena/wiki/MiniVoxelPathTracer)
+验收标准见题面“交付与验收”，渲染算法与资源管理机制见 [IMPLEMENTATION.md](https://github.com/yhcedpn/RenderArena/blob/main/Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max/IMPLEMENTATION.md)。
 
 ## 文档维护
 
