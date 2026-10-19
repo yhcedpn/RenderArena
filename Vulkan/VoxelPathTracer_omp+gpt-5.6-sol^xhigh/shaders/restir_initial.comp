@@ -1,0 +1,35 @@
+#version 460
+#include "restir.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+float candidateRandom(uint pixel, uint candidate, uint dimension) {
+    uint frame = frames[pc.frameSlot].frameInfo.x;
+    return float(hash32(pixel ^ hash32(frame * 0x9e3779b9u) ^ hash32(candidate * 17u + dimension))) * (1.0 / 4294967296.0);
+}
+
+void main() {
+    uint pixel = linearInvocationIndex();
+    if (pixel >= pixelCount()) return;
+    Surface surface = surfaces[surfaceIndex(pc.frameParity, pixel)];
+    Reservoir reservoir;
+    emptyReservoir(reservoir);
+    if (surface.positionValid.w == 0.0) {
+        reservoirs[reservoirIndex(3u, pixel)] = reservoir;
+        return;
+    }
+    for (uint candidate = 0u; candidate < 4u; ++candidate) {
+        float selectionPdf;
+        uint light = restirSelectLight(candidateRandom(pixel, candidate, 0u), selectionPdf);
+        vec2 bary = vec2(candidateRandom(pixel, candidate, 1u), candidateRandom(pixel, candidate, 2u));
+        float target;
+        float proposalPdf;
+        evaluateDirect(surface, light, bary, target, proposalPdf);
+        float weight = target > 0.0 && proposalPdf > 0.0 ? target / proposalPdf : 0.0;
+        reservoirUpdate(reservoir, light, bary, target, target, weight, target > 0.0 ? 1u : 0u, candidateRandom(pixel, candidate, 3u));
+    }
+    if (reservoir.identity.z != 0u && reservoir.baryTarget.z > 0.0 && reservoir.identity.y > 0u) {
+        reservoir.weights.y = reservoir.weights.x / (float(reservoir.identity.y) * reservoir.baryTarget.z);
+    }
+    reservoirs[reservoirIndex(3u, pixel)] = reservoir;
+}

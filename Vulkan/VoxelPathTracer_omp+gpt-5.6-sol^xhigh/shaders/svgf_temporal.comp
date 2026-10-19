@@ -1,0 +1,112 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+Guide guideFor(uint pixel, uint domain, out uvec4 meta) {
+    BranchOutput a = branchOutputs[branchIndex(pixel, 0u)];
+    BranchOutput b = branchOutputs[branchIndex(pixel, 1u)];
+    if (a.guide.worldValid.w != 0.0 && (a.guideMeta.w & 0xffu) == domain) {
+        meta = a.guideMeta;
+        return a.guide;
+    }
+    if (b.guide.worldValid.w != 0.0 && (b.guideMeta.w & 0xffu) == domain) {
+        meta = b.guideMeta;
+        return b.guide;
+    }
+    meta = uvec4(0u);
+    Guide invalidGuide;
+    invalidGuide.worldValid = vec4(0.0);
+    invalidGuide.virtualDepth = vec4(0.0);
+    invalidGuide.normalRoughness = vec4(0.0);
+    invalidGuide.identity = uvec4(INVALID_ID);
+    return invalidGuide;
+}
+
+vec3 demodulate(vec3 value, uvec4 meta) {
+    uint terminalType = meta.w >> 8u;
+    if (terminalType != 0u) return value;
+    vec3 albedo = vec3(uintBitsToFloat(meta.x), uintBitsToFloat(meta.y), uintBitsToFloat(meta.z));
+    return vec3(albedo.x > 0.0 ? value.x / albedo.x : 0.0,
+                albedo.y > 0.0 ? value.y / albedo.y : 0.0,
+                albedo.z > 0.0 ? value.z / albedo.z : 0.0);
+}
+
+float localVariance(uint pixel, uint domain, Guide center) {
+    int x = int(pixel % pc.width);
+    int y = int(pixel / pc.width);
+    float sum = 0.0;
+    float sumSquared = 0.0;
+    float count = 0.0;
+    for (int oy = -1; oy <= 1; ++oy) {
+        for (int ox = -1; ox <= 1; ++ox) {
+            ivec2 q = ivec2(x + ox, y + oy);
+            if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.width, pc.height)))) continue;
+            uint neighbor = uint(q.y) * pc.width + uint(q.x);
+            uvec4 neighborMeta;
+            Guide neighborGuide = guideFor(neighbor, domain, neighborMeta);
+            if (!compatibleGuide(center, neighborGuide)) continue;
+            vec3 sampleValue = demodulate(atrousA[domainIndex(neighbor, domain)].rgb, neighborMeta);
+            float l = luminance(sampleValue);
+            sum += l;
+            sumSquared += l * l;
+            count += 1.0;
+        }
+    }
+    if (count <= 1.0) return 0.0;
+    float mean = sum / count;
+    return max(sumSquared / count - mean * mean, 0.0);
+}
+
+void main() {
+    uint invocation = linearInvocationIndex();
+    if (invocation >= pixelCount() * DOMAIN_COUNT) return;
+    uint pixel = invocation / DOMAIN_COUNT;
+    uint domain = invocation % DOMAIN_COUNT;
+    uvec4 meta;
+    Guide currentGuide = guideFor(pixel, domain, meta);
+    vec3 currentSample = demodulate(atrousA[domainIndex(pixel, domain)].rgb, meta);
+    float currentLuminance = luminance(currentSample);
+    vec3 accumulated = currentSample;
+    float m1 = currentLuminance;
+    float m2 = currentLuminance * currentLuminance;
+    float historyLength = currentGuide.worldValid.w != 0.0 ? 1.0 : 0.0;
+    bool validHistory = false;
+    HistoryRecord previous;
+
+    FrameData frame = frames[pc.frameSlot];
+    if (currentGuide.worldValid.w != 0.0 && frame.frameInfo.w == 0u && !(domain == DOMAIN_TRANSMISSION && frame.frameInfo.z != 0u)) {
+        ivec2 previousPixel;
+        float previousDepth;
+        bool projected;
+        if (domain == DOMAIN_TRANSMISSION) {
+            vec2 jitterDelta = frame.jitterAndTime.zw - frame.jitterAndTime.xy;
+            previousPixel = ivec2(int(pixel % pc.width), int(pixel / pc.width)) + ivec2(round(jitterDelta));
+            projected = all(greaterThanEqual(previousPixel, ivec2(0))) && all(lessThan(previousPixel, ivec2(pc.width, pc.height)));
+        } else {
+            projected = projectPrevious(currentGuide.virtualDepth.xyz, frame, previousPixel, previousDepth);
+        }
+        if (projected) {
+            uint previousPixelIndex = uint(previousPixel.y) * pc.width + uint(previousPixel.x);
+            previous = histories[historyIndex(1u - pc.frameParity, previousPixelIndex, domain)];
+            validHistory = compatibleGuide(currentGuide, previous.guide) && previous.moments.z > 0.0;
+        }
+    }
+
+    if (validHistory) {
+        historyLength = min(previous.moments.z + 1.0, 32.0);
+        float alpha = max(1.0 / historyLength, 1.0 / 32.0);
+        accumulated = mix(previous.radianceVariance.rgb, currentSample, alpha);
+        m1 = mix(previous.moments.x, currentLuminance, alpha);
+        m2 = mix(previous.moments.y, currentLuminance * currentLuminance, alpha);
+    }
+    float variance = max(m2 - m1 * m1, 0.0);
+    if (historyLength < 4.0 && currentGuide.worldValid.w != 0.0) variance = max(variance, localVariance(pixel, domain, currentGuide));
+
+    HistoryRecord current;
+    current.radianceVariance = vec4(accumulated, variance);
+    current.moments = vec4(m1, m2, historyLength, 0.0);
+    current.guide = currentGuide;
+    histories[historyIndex(pc.frameParity, pixel, domain)] = current;
+    atrousB[domainIndex(pixel, domain)] = current.radianceVariance;
+}

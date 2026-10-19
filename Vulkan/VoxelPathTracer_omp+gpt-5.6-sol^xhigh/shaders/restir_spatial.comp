@@ -1,0 +1,91 @@
+#version 460
+#include "restir.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+float spatialRandom(uint pixel, uint source) {
+    return float(hash32(pixel ^ hash32(frames[pc.frameSlot].frameInfo.x * 0xc2b2ae35u) ^ source * 0x27d4eb2du)) * (1.0 / 4294967296.0);
+}
+
+void main() {
+    uint pixel = linearInvocationIndex();
+    if (pixel >= pixelCount()) return;
+    uint x = pixel % pc.width;
+    uint y = pixel / pc.width;
+    Surface destination = surfaces[surfaceIndex(pc.frameParity, pixel)];
+    Reservoir outputReservoir;
+    emptyReservoir(outputReservoir);
+    if (destination.positionValid.w == 0.0) {
+        reservoirs[reservoirIndex(pc.frameParity, pixel)] = outputReservoir;
+        return;
+    }
+
+    uint sourcePixels[5];
+    bool sourceValid[5];
+    sourcePixels[0] = pixel;
+    sourceValid[0] = true;
+    for (uint i = 1u; i < 5u; ++i) {
+        uint h = hash32(pixel ^ hash32(frames[pc.frameSlot].frameInfo.x + i * 41u));
+        int dx = int(h & 15u) - 7;
+        int dy = int((h >> 4u) & 15u) - 7;
+        if (dx == 0 && dy == 0) dx = int(i);
+        ivec2 q = ivec2(int(x) + dx, int(y) + dy);
+        sourceValid[i] = all(greaterThanEqual(q, ivec2(0))) && all(lessThan(q, ivec2(pc.width, pc.height)));
+        sourcePixels[i] = sourceValid[i] ? uint(q.y) * pc.width + uint(q.x) : pixel;
+        if (sourceValid[i]) {
+            Surface neighbor = surfaces[surfaceIndex(pc.frameParity, sourcePixels[i])];
+            sourceValid[i] = compatibleSurface(destination, neighbor);
+        }
+    }
+
+    for (uint i = 0u; i < 5u; ++i) {
+        if (!sourceValid[i]) continue;
+        Reservoir source = reservoirs[reservoirIndex(2u, sourcePixels[i])];
+        if (source.identity.z == 0u || source.identity.y == 0u) continue;
+        float destinationTarget;
+        float ignoredProposal;
+        evaluateDirect(destination, source.identity.x, source.baryTarget.xy, destinationTarget, ignoredProposal);
+        if (destinationTarget <= 0.0) continue;
+
+        float denominator = 0.0;
+        float numerator = 0.0;
+        for (uint j = 0u; j < 5u; ++j) {
+            if (!sourceValid[j]) continue;
+            Reservoir support = reservoirs[reservoirIndex(2u, sourcePixels[j])];
+            if (support.identity.z == 0u || support.identity.y == 0u) continue;
+            Surface supportSurface = surfaces[surfaceIndex(pc.frameParity, sourcePixels[j])];
+            float supportTarget;
+            float supportProposal;
+            evaluateDirect(supportSurface, source.identity.x, source.baryTarget.xy, supportTarget, supportProposal);
+            float term = float(support.identity.y) * supportTarget;
+            denominator += term;
+            if (j == i) numerator = term;
+        }
+        float supportCorrection = denominator > 0.0 ? numerator / denominator : 0.0;
+        float weight = destinationTarget * source.weights.y * float(source.identity.y) * supportCorrection;
+        reservoirUpdate(outputReservoir, source.identity.x, source.baryTarget.xy, destinationTarget,
+            source.baryTarget.z, weight, source.identity.y, spatialRandom(pixel, i));
+    }
+
+    if (outputReservoir.identity.z != 0u && outputReservoir.baryTarget.z > 0.0 && outputReservoir.identity.y > 0u) {
+        outputReservoir.weights.y = outputReservoir.weights.x / (float(outputReservoir.identity.y) * outputReservoir.baryTarget.z);
+        float target;
+        float proposal;
+        vec3 direct = evaluateDirect(destination, outputReservoir.identity.x, outputReservoir.baryTarget.xy, target, proposal) * outputReservoir.weights.y;
+        vec3 toLight = outputReservoir.samplePosition.xyz - destination.positionValid.xyz;
+        float distanceValue = length(toLight);
+        if (luminance(direct) > 0.0 && distanceValue > 0.002) {
+            uint taskIndex = atomicAdd(shadowCount, 1u);
+            if (taskIndex < pathCapacity()) {
+                shadowTasks[taskIndex].originMaxT = vec4(destination.positionValid.xyz + destination.normalRoughness.xyz * 0.001, distanceValue - 0.002);
+                shadowTasks[taskIndex].directionPad = vec4(toLight / distanceValue, 0.0);
+                shadowTasks[taskIndex].contribution = vec4(direct, 0.0);
+                uint domain = uint(destination.albedoType.w + 0.5) == 1u ? DOMAIN_SPECULAR : DOMAIN_DIFFUSE;
+                shadowTasks[taskIndex].identity = uvec4(pixel, 0u, domain, 1u);
+            } else {
+                atomicOr(overflowed, 4u);
+            }
+        }
+    }
+    reservoirs[reservoirIndex(pc.frameParity, pixel)] = outputReservoir;
+}

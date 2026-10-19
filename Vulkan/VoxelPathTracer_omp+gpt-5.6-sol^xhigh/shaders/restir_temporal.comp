@@ -1,0 +1,52 @@
+#version 460
+#include "restir.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+float temporalRandom(uint pixel, uint source) {
+    return float(hash32(pixel ^ hash32(frames[pc.frameSlot].frameInfo.x * 0x85ebca6bu) ^ source * 0x9e3779b9u)) * (1.0 / 4294967296.0);
+}
+
+void addSource(inout Reservoir combined, Reservoir source, Surface destination, uint multiplicity, float randomValue) {
+    if (source.identity.z == 0u || multiplicity == 0u) return;
+    float target;
+    float proposal;
+    evaluateDirect(destination, source.identity.x, source.baryTarget.xy, target, proposal);
+    float weight = target * source.weights.y * float(multiplicity);
+    reservoirUpdate(combined, source.identity.x, source.baryTarget.xy, target, source.baryTarget.z, weight, multiplicity, randomValue);
+}
+
+void main() {
+    uint pixel = linearInvocationIndex();
+    if (pixel >= pixelCount()) return;
+    Surface currentSurface = surfaces[surfaceIndex(pc.frameParity, pixel)];
+    Reservoir combined;
+    emptyReservoir(combined);
+    if (currentSurface.positionValid.w == 0.0) {
+        reservoirs[reservoirIndex(2u, pixel)] = combined;
+        return;
+    }
+
+    Reservoir fresh = reservoirs[reservoirIndex(3u, pixel)];
+    addSource(combined, fresh, currentSurface, fresh.identity.y, temporalRandom(pixel, 0u));
+
+    FrameData frame = frames[pc.frameSlot];
+    if (frame.frameInfo.w == 0u) {
+        ivec2 previousPixel;
+        float previousDepth;
+        if (projectPrevious(currentSurface.positionValid.xyz, frame, previousPixel, previousDepth)) {
+            uint previousIndex = uint(previousPixel.y) * pc.width + uint(previousPixel.x);
+            Surface previousSurface = surfaces[surfaceIndex(1u - pc.frameParity, previousIndex)];
+            if (compatibleSurface(currentSurface, previousSurface)) {
+                Reservoir previous = reservoirs[reservoirIndex(1u - pc.frameParity, previousIndex)];
+                uint multiplicity = min(previous.identity.y, 32u);
+                addSource(combined, previous, currentSurface, multiplicity, temporalRandom(pixel, 1u));
+            }
+        }
+    }
+
+    if (combined.identity.z != 0u && combined.baryTarget.z > 0.0 && combined.identity.y > 0u) {
+        combined.weights.y = combined.weights.x / (float(combined.identity.y) * combined.baryTarget.z);
+    }
+    reservoirs[reservoirIndex(2u, pixel)] = combined;
+}

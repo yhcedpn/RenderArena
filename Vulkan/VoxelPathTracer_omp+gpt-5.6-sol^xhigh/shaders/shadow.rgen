@@ -1,0 +1,15 @@
+#version 460
+#define ENABLE_RAY_TRACING_STAGE
+#include "common.glsl"
+
+layout(location = 1) rayPayloadEXT uint visible;
+
+void main() {
+    uint index = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
+    if (index >= shadowCount) return;
+    ShadowTask task = shadowTasks[index];
+    visible = 0u;
+    traceRayEXT(topLevel, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+        0xff, 1, 0, 1, task.originMaxT.xyz, 0.0, task.directionPad.xyz, task.originMaxT.w, 1);
+    shadowResults[index] = visible;
+}

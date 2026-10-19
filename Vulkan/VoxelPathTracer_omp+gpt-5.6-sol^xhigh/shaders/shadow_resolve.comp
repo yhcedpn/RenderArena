@@ -1,0 +1,15 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint index = linearInvocationIndex();
+    if (index >= shadowCount || shadowResults[index] == 0u) return;
+    ShadowTask task = shadowTasks[index];
+    uint slot = branchIndex(task.identity.x, task.identity.y);
+    BranchOutput outputValue = branchOutputs[slot];
+    vec4 signal = getSignal(outputValue, task.identity.z);
+    setSignal(outputValue, task.identity.z, signal + task.contribution);
+    branchOutputs[slot] = outputValue;
+}

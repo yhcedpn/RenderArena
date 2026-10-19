@@ -1,0 +1,290 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint TYPE_DIFFUSE = 0u;
+const uint TYPE_METAL = 1u;
+const uint TYPE_MIRROR = 2u;
+const uint TYPE_GLASS = 3u;
+const uint TYPE_EMISSIVE = 4u;
+
+uint pathDomain(PathState path, uint terminalType) {
+    if (path.chain.w != 0u) return path.chain.w - 1u;
+    if ((path.flags.z & 2u) != 0u) return DOMAIN_TRANSMISSION;
+    if ((path.flags.z & 1u) != 0u) return DOMAIN_REFLECTION;
+    return terminalType == TYPE_METAL ? DOMAIN_SPECULAR : DOMAIN_DIFFUSE;
+}
+
+void establishGuide(inout PathState path, vec3 position, vec3 normal, float roughness, uint surfaceId, uint materialId, uint terminalType, vec3 albedo) {
+    uint slot = branchIndex(path.identity.x, path.identity.y);
+    BranchOutput outputValue = branchOutputs[slot];
+    uint domain = pathDomain(path, terminalType);
+    if (path.chain.w == 0u) path.chain.w = domain + 1u;
+    if (outputValue.guide.worldValid.w == 0.0) {
+        vec3 virtualPosition = transformPoint(path, position);
+        vec3 virtualNormal = transformVector(path, normal);
+        outputValue.guide.worldValid = vec4(position, 1.0);
+        outputValue.guide.virtualDepth = vec4(virtualPosition, length(virtualPosition - frames[pc.frameSlot].cameraPositionTanFov.xyz));
+        outputValue.guide.normalRoughness = vec4(virtualNormal, roughness);
+        outputValue.guide.identity = uvec4(surfaceId, materialId, path.chain.x, path.chain.y | (path.flags.z << 16u));
+        outputValue.guideMeta = uvec4(floatBitsToUint(albedo.x), floatBitsToUint(albedo.y), floatBitsToUint(albedo.z), domain | (terminalType << 8u));
+        branchOutputs[slot] = outputValue;
+    }
+}
+
+void addContribution(PathState path, uint domain, vec3 contribution) {
+    uint slot = branchIndex(path.identity.x, path.identity.y);
+    BranchOutput outputValue = branchOutputs[slot];
+    vec4 signal = getSignal(outputValue, domain);
+    setSignal(outputValue, domain, signal + vec4(contribution, 0.0));
+    branchOutputs[slot] = outputValue;
+}
+
+void appendPath(PathState path) {
+    uint destination = atomicAdd(nextCount, 1u);
+    if (destination >= pathCapacity()) {
+        atomicOr(overflowed, 1u);
+        return;
+    }
+    storeNextPath(destination, path);
+}
+
+uint selectLight(float xi, out float selectionPdf) {
+    uint lightCount = frames[pc.frameSlot].frameInfo.y;
+    uint selected = lightCount - 1u;
+    float previous = 0.0;
+    for (uint i = 0u; i < lightCount; ++i) {
+        float cdf = lights[i].p1Cdf.w;
+        if (xi <= cdf && selected == lightCount - 1u) selected = i;
+        if (i == selected) {
+            selectionPdf = cdf - previous;
+            return selected;
+        }
+        previous = cdf;
+    }
+    selectionPdf = 1.0;
+    return lightCount - 1u;
+}
+
+float lightDirectionPdf(uint primitiveId, float distanceSquared, float lightCosine) {
+    uint lightCount = frames[pc.frameSlot].frameInfo.y;
+    float previous = 0.0;
+    for (uint i = 0u; i < lightCount; ++i) {
+        float cdf = lights[i].p1Cdf.w;
+        if (lights[i].trianglePad.x == primitiveId) return (cdf - previous) / lights[i].p0Area.w * distanceSquared / max(lightCosine, 1e-7);
+        previous = cdf;
+    }
+    return 0.0;
+}
+
+void createNee(inout PathState path, vec3 position, vec3 normal, vec3 wo, vec3 albedo, float roughness, uint materialType, uint domain) {
+    float selectionPdf;
+    uint lightIndex = selectLight(randomFloat(path), selectionPdf);
+    Light light = lights[lightIndex];
+    float su = sqrt(randomFloat(path));
+    float v = randomFloat(path);
+    vec3 lightPosition = (1.0 - su) * light.p0Area.xyz + su * (1.0 - v) * light.p1Cdf.xyz + su * v * light.p2Pad.xyz;
+    vec3 toLight = lightPosition - position;
+    float distanceSquared = dot(toLight, toLight);
+    float distanceValue = sqrt(distanceSquared);
+    vec3 wi = toLight / distanceValue;
+    float receiveCosine = max(dot(normal, wi), 0.0);
+    float lightCosine = max(dot(light.normalPad.xyz, -wi), 0.0);
+    if (receiveCosine <= 0.0 || lightCosine <= 0.0) return;
+    float bsdfPdf;
+    vec3 f;
+    if (materialType == TYPE_DIFFUSE) {
+        f = albedo / PI;
+        bsdfPdf = receiveCosine / PI;
+    } else {
+        f = evaluateGgx(wo, wi, normal, albedo, roughness, bsdfPdf);
+    }
+    float areaPdf = selectionPdf / light.p0Area.w;
+    float directionPdf = areaPdf * distanceSquared / lightCosine;
+    float mis = powerHeuristic(directionPdf, bsdfPdf);
+    vec3 contribution = path.throughputPdf.xyz * f * light.emissionPower.xyz * (receiveCosine * lightCosine / distanceSquared) / areaPdf * mis;
+    if (luminance(contribution) <= 0.0) return;
+    uint index = atomicAdd(shadowCount, 1u);
+    if (index >= pathCapacity()) {
+        atomicOr(overflowed, 2u);
+        return;
+    }
+    const float offset = 0.001;
+    shadowTasks[index].originMaxT = vec4(position + normal * offset, max(distanceValue - 2.0 * offset, 0.0));
+    shadowTasks[index].directionPad = vec4(wi, 0.0);
+    shadowTasks[index].contribution = vec4(contribution, 0.0);
+    shadowTasks[index].identity = uvec4(path.identity.x, path.identity.y, domain, 0u);
+}
+
+void continuePath(PathState nextPath, vec3 position, vec3 normal, vec3 direction, vec3 throughput, float pdf, float coneGrowth) {
+    nextPath.identity.z++;
+    if (nextPath.identity.z >= 4u) {
+        float survival = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.05, 0.95);
+        if (randomFloat(nextPath) >= survival) return;
+        throughput /= survival;
+    }
+    nextPath.originTmin = vec4(position + normal * (dot(direction, normal) >= 0.0 ? 0.001 : -0.001), 0.0);
+    nextPath.directionCone = vec4(normalize(direction), nextPath.directionCone.w + coneGrowth);
+    nextPath.throughputPdf = vec4(throughput, pdf);
+    appendPath(nextPath);
+}
+
+void main() {
+    uint index = linearInvocationIndex();
+    if (index >= currentCount) return;
+    PathState path = loadCurrentPath(index);
+    HitRecord hit = hits[index];
+    if (hit.identity.x == INVALID_ID) {
+        if (path.flags.z != 0u) {
+            vec3 terminal = path.originTmin.xyz + path.directionCone.xyz * 1000.0;
+            establishGuide(path, terminal, -path.directionCone.xyz, 0.0, 0xfffffffeu, INVALID_ID, TYPE_EMISSIVE, vec3(1.0));
+        }
+        return;
+    }
+
+    uint primitive = hit.identity.x;
+    uint i0 = indices[primitive * 3u + 0u];
+    uint i1 = indices[primitive * 3u + 1u];
+    uint i2 = indices[primitive * 3u + 2u];
+    Vertex v0 = vertices[i0];
+    Vertex v1 = vertices[i1];
+    Vertex v2 = vertices[i2];
+    float b1 = hit.baryT.x;
+    float b2 = hit.baryT.y;
+    float b0 = 1.0 - b1 - b2;
+    vec3 position = path.originTmin.xyz + path.directionCone.xyz * hit.baryT.z;
+    vec3 geometricNormal = normalize(v0.normalU.xyz * b0 + v1.normalU.xyz * b1 + v2.normalU.xyz * b2);
+    vec2 uv = vec2(v0.normalU.w * b0 + v1.normalU.w * b1 + v2.normalU.w * b2,
+                    v0.vMaterialSurface.x * b0 + v1.vMaterialSurface.x * b1 + v2.vMaterialSurface.x * b2);
+    uint materialId = uint(v0.vMaterialSurface.y + 0.5);
+    uint surfaceId = uint(v0.vMaterialSurface.z + 0.5);
+    Material material = materials[materialId];
+    uint materialType = material.textureTypePad.y;
+    float footprint = max(path.directionCone.w * max(hit.baryT.z, 0.0) * float(textureSize(baseColorTextures, 0).x), 1.0);
+    float lod = clamp(log2(footprint), 0.0, float(textureQueryLevels(baseColorTextures) - 1));
+    vec3 albedo = textureLod(baseColorTextures, vec3(uv, float(material.textureTypePad.x)), lod).rgb;
+    float roughness = textureLod(roughnessTextures, vec3(uv, float(material.textureTypePad.x)), lod).r;
+    vec3 throughput = path.throughputPdf.xyz;
+    if (path.flags.x != 0u) throughput *= exp(-material.absorptionRoughness.xyz * hit.baryT.z);
+
+    bool frontFace = dot(path.directionCone.xyz, geometricNormal) < 0.0;
+    vec3 normal = frontFace ? geometricNormal : -geometricNormal;
+    vec3 wo = -path.directionCone.xyz;
+
+    if (materialType == TYPE_EMISSIVE) {
+        if (frontFace) {
+            vec3 value = throughput * material.emissionIor.xyz;
+            bool directPrimary = path.identity.z == 0u && path.chain.y == 0u && path.flags.z == 0u;
+            if (directPrimary) {
+                uint slot = branchIndex(path.identity.x, path.identity.y);
+                BranchOutput outputValue = branchOutputs[slot];
+                outputValue.emission += vec4(value, 0.0);
+                branchOutputs[slot] = outputValue;
+            } else if (path.flags.w == 0u) {
+                float weight = 1.0;
+                if (path.throughputPdf.w > 0.0) {
+                    float lightCosine = max(dot(geometricNormal, -path.directionCone.xyz), 0.0);
+                    float lightPdf = lightDirectionPdf(primitive, hit.baryT.z * hit.baryT.z, lightCosine);
+                    weight = powerHeuristic(path.throughputPdf.w, lightPdf);
+                }
+                uint domain = pathDomain(path, TYPE_EMISSIVE);
+                establishGuide(path, position, normal, 0.0, surfaceId, materialId, TYPE_EMISSIVE, vec3(1.0));
+                addContribution(path, domain, value * weight);
+            }
+        }
+        return;
+    }
+
+    if (path.identity.z >= 8u) return;
+
+    if (materialType == TYPE_DIFFUSE || materialType == TYPE_METAL) {
+        uint domain = pathDomain(path, materialType);
+        establishGuide(path, position, normal, roughness, surfaceId, materialId, materialType, albedo);
+        bool primaryRestir = path.identity.z == 0u && path.chain.y == 0u && path.flags.z == 0u;
+        if (primaryRestir) {
+            Surface surface;
+            surface.positionValid = vec4(position, 1.0);
+            surface.normalRoughness = vec4(normal, roughness);
+            surface.albedoType = vec4(albedo, float(materialType));
+            surface.identity = uvec4(surfaceId, materialId, primitive, 0u);
+            surfaces[surfaceIndex(pc.frameParity, path.identity.x)] = surface;
+        } else {
+            createNee(path, position, normal, wo, albedo, roughness, materialType, domain);
+        }
+
+        vec3 wi;
+        vec3 f;
+        float pdf;
+        float cosine;
+        if (materialType == TYPE_DIFFUSE) {
+            wi = cosineHemisphere(vec2(randomFloat(path), randomFloat(path)), normal);
+            cosine = max(dot(normal, wi), 0.0);
+            pdf = cosine / PI;
+            f = albedo / PI;
+        } else {
+            float alpha = max(roughness * roughness, 0.0025);
+            vec3 halfVector = sampleGgxVndf(wo, normal, alpha, vec2(randomFloat(path), randomFloat(path)));
+            wi = reflect(-wo, halfVector);
+            cosine = max(dot(normal, wi), 0.0);
+            f = evaluateGgx(wo, wi, normal, albedo, roughness, pdf);
+        }
+        if (pdf <= 0.0 || cosine <= 0.0) return;
+        path.flags.w = primaryRestir ? 1u : 0u;
+        continuePath(path, position, normal, wi, throughput * f * cosine / pdf, pdf, roughness * 0.02);
+        return;
+    }
+
+    if (materialType == TYPE_MIRROR) {
+        vec3 wi = reflect(path.directionCone.xyz, normal);
+        path.flags.z |= 1u;
+        path.flags.w = 0u;
+        appendReflectionTransform(path, normal, position, surfaceId);
+        continuePath(path, position, normal, wi, throughput * albedo, 0.0, 0.0);
+        return;
+    }
+
+    float etaI = path.flags.x != 0u ? material.emissionIor.w : 1.0;
+    float etaT = path.flags.x != 0u ? 1.0 : material.emissionIor.w;
+    float eta = etaI / etaT;
+    float fresnel = dielectricFresnel(dot(wo, normal), etaI, etaT);
+    vec3 reflected = reflect(path.directionCone.xyz, normal);
+    vec3 transmitted = refract(path.directionCone.xyz, normal, eta);
+    bool totalInternal = dot(transmitted, transmitted) == 0.0;
+
+    if (path.flags.y == 0u && !totalInternal) {
+        PathState reflectionPath = path;
+        reflectionPath.flags.y = 1u;
+        reflectionPath.flags.z |= 1u;
+        reflectionPath.flags.w = 0u;
+        appendReflectionTransform(reflectionPath, normal, position, surfaceId);
+        continuePath(reflectionPath, position, normal, reflected, throughput * fresnel, 0.0, 0.0);
+
+        PathState transmissionPath = path;
+        transmissionPath.identity.y = 1u;
+        transmissionPath.flags.x = path.flags.x == 0u ? 1u : 0u;
+        transmissionPath.flags.y = 1u;
+        transmissionPath.flags.z |= 2u;
+        transmissionPath.flags.w = 0u;
+        transmissionPath.chain.x = hash32(transmissionPath.chain.x ^ hash32(surfaceId ^ 0xa511e9b3u));
+        transmissionPath.chain.y++;
+        vec3 offsetNormal = -normal;
+        continuePath(transmissionPath, position, offsetNormal, transmitted, throughput * (1.0 - fresnel) * eta * eta, 0.0, 0.0);
+        return;
+    }
+
+    bool chooseReflection = totalInternal || randomFloat(path) < fresnel;
+    path.flags.y = 1u;
+    path.flags.w = 0u;
+    if (chooseReflection) {
+        path.flags.z |= 1u;
+        appendReflectionTransform(path, normal, position, surfaceId);
+        continuePath(path, position, normal, reflected, throughput, 0.0, 0.0);
+    } else {
+        path.flags.x = path.flags.x == 0u ? 1u : 0u;
+        path.flags.z |= 2u;
+        path.chain.x = hash32(path.chain.x ^ hash32(surfaceId ^ 0xa511e9b3u));
+        path.chain.y++;
+        continuePath(path, position, -normal, transmitted, throughput * eta * eta, 0.0, 0.0);
+    }
+}

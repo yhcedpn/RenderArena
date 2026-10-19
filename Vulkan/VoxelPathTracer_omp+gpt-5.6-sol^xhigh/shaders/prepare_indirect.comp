@@ -1,0 +1,24 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint paths = nextCount;
+    uint shadows = shadowCount;
+    uint pathRayWidth = paths == 0u ? 1u : min(paths, pc.width);
+    uint pathRayHeight = max((paths + pathRayWidth - 1u) / pathRayWidth, 1u);
+    uint pathGroups = max((paths + 63u) / 64u, 1u);
+    uint pathGroupWidth = min(pathGroups, pc.phase);
+    uint pathGroupHeight = (pathGroups + pathGroupWidth - 1u) / pathGroupWidth;
+    uint shadowRayWidth = shadows == 0u ? 1u : min(shadows, pc.width);
+    uint shadowRayHeight = max((shadows + shadowRayWidth - 1u) / shadowRayWidth, 1u);
+    uint shadowGroups = max((shadows + 63u) / 64u, 1u);
+    uint shadowGroupWidth = min(shadowGroups, pc.phase);
+    uint shadowGroupHeight = (shadowGroups + shadowGroupWidth - 1u) / shadowGroupWidth;
+    commands[0] = uvec4(pathRayWidth, pathRayHeight, 1u, 0u);
+    commands[1] = uvec4(pathGroupWidth, pathGroupHeight, 1u, 0u);
+    commands[2] = uvec4(shadowRayWidth, shadowRayHeight, 1u, 0u);
+    commands[3] = uvec4(shadowGroupWidth, shadowGroupHeight, 1u, 0u);
+    currentCount = paths;
+}

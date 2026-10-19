@@ -1,0 +1,16 @@
+#version 460
+#define ENABLE_RAY_TRACING_STAGE
+#include "common.glsl"
+
+layout(location = 0) rayPayloadEXT HitRecord payload;
+
+void main() {
+    uint index = gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x;
+    if (index >= currentCount) return;
+    PathState path = loadCurrentPath(index);
+    payload.baryT = vec4(0.0, 0.0, 0.0, -1.0);
+    payload.identity = uvec4(INVALID_ID);
+    traceRayEXT(topLevel, gl_RayFlagsNoneEXT, 0xff, 0, 0, 0,
+        path.originTmin.xyz, path.originTmin.w, path.directionCone.xyz, 10000.0, 0);
+    hits[index] = payload;
+}
