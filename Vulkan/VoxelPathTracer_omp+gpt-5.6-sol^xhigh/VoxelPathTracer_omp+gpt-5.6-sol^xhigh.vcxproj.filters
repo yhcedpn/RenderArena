@@ -9,6 +9,51 @@
     <ClCompile Include="main.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\materials.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\renderer.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\scene.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\materials.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\math.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\renderer.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\scene.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\prepare_indirect.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\primary.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_initial.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_spatial.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_temporal.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shade.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow_resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\surface.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\surface.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\surface.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\svgf_atrous.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\svgf_temporal.comp"><Filter>源文件</Filter></None>
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md">

@@ -1,0 +1,72 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+Guide currentGuide(uint pixel, uint domain) {
+    BranchOutput a = branchOutputs[branchIndex(pixel, 0u)];
+    BranchOutput b = branchOutputs[branchIndex(pixel, 1u)];
+    if (a.guide.worldValid.w != 0.0 && (a.guideMeta.w & 0xffu) == domain) return a.guide;
+    if (b.guide.worldValid.w != 0.0 && (b.guideMeta.w & 0xffu) == domain) return b.guide;
+    Guide result;
+    result.worldValid = vec4(0.0);
+    result.virtualDepth = vec4(0.0);
+    result.normalRoughness = vec4(0.0);
+    result.identity = uvec4(INVALID_ID);
+    return result;
+}
+
+vec4 readInput(uint index) {
+    return (pc.iteration & 1u) == 0u ? atrousB[index] : atrousA[index];
+}
+
+void writeOutput(uint index, vec4 value) {
+    if ((pc.iteration & 1u) == 0u) atrousA[index] = value;
+    else atrousB[index] = value;
+}
+
+void main() {
+    uint invocation = linearInvocationIndex();
+    if (invocation >= pixelCount() * DOMAIN_COUNT) return;
+    uint pixel = invocation / DOMAIN_COUNT;
+    uint domain = invocation % DOMAIN_COUNT;
+    uint x = pixel % pc.width;
+    uint y = pixel / pc.width;
+    uint index = domainIndex(pixel, domain);
+    vec4 center = readInput(index);
+    Guide centerGuide = currentGuide(pixel, domain);
+    if (centerGuide.worldValid.w == 0.0) {
+        writeOutput(index, center);
+        return;
+    }
+
+    const float kernel[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
+    int stepWidth = 1 << int(pc.iteration);
+    vec3 sum = vec3(0.0);
+    float weightSum = 0.0;
+    float varianceSum = 0.0;
+    float centerLuminance = luminance(center.rgb);
+    float sigma = sqrt(max(center.a, 1e-8));
+    for (int ky = -2; ky <= 2; ++ky) {
+        for (int kx = -2; kx <= 2; ++kx) {
+            ivec2 q = ivec2(int(x) + kx * stepWidth, int(y) + ky * stepWidth);
+            if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, ivec2(pc.width, pc.height)))) continue;
+            uint neighborPixel = uint(q.y) * pc.width + uint(q.x);
+            Guide neighborGuide = currentGuide(neighborPixel, domain);
+            if (!compatibleGuide(centerGuide, neighborGuide)) continue;
+            vec4 neighbor = readInput(domainIndex(neighborPixel, domain));
+            float normalWeight = pow(max(dot(centerGuide.normalRoughness.xyz, neighborGuide.normalRoughness.xyz), 0.0), 32.0);
+            float positionScale = max(0.02, 0.01 * abs(centerGuide.virtualDepth.w));
+            float positionWeight = exp(-distance(centerGuide.virtualDepth.xyz, neighborGuide.virtualDepth.xyz) / positionScale);
+            float roughnessWeight = exp(-abs(centerGuide.normalRoughness.w - neighborGuide.normalRoughness.w) * 20.0);
+            float luminanceWeight = exp(-abs(luminance(neighbor.rgb) - centerLuminance) / max(4.0 * sigma, 1e-4));
+            float kernelWeight = kernel[kx + 2] * kernel[ky + 2] * (1.0 / 256.0);
+            float weight = kernelWeight * normalWeight * positionWeight * roughnessWeight * luminanceWeight;
+            sum += neighbor.rgb * weight;
+            varianceSum += neighbor.a * weight * weight;
+            weightSum += weight;
+        }
+    }
+    if (weightSum > 0.0) writeOutput(index, vec4(sum / weightSum, varianceSum / (weightSum * weightSum)));
+    else writeOutput(index, center);
+}

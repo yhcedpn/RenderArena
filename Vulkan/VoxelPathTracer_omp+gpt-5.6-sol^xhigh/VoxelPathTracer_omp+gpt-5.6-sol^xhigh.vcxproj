@@ -26,6 +26,37 @@
   <Import Project="..\..\cmake\RenderArena.props" />
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\materials.cpp" />
+    <ClCompile Include="src\renderer.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\materials.hpp" />
+    <ClInclude Include="src\math.hpp" />
+    <ClInclude Include="src\renderer.hpp" />
+    <ClInclude Include="src\scene.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\display.frag" />
+    <None Include="shaders\display.vert" />
+    <None Include="shaders\prepare_indirect.comp" />
+    <None Include="shaders\primary.comp" />
+    <None Include="shaders\resolve.comp" />
+    <None Include="shaders\restir.glsl" />
+    <None Include="shaders\restir_initial.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\shade.comp" />
+    <None Include="shaders\shadow.rchit" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\shadow.rmiss" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\surface.rchit" />
+    <None Include="shaders\surface.rgen" />
+    <None Include="shaders\surface.rmiss" />
+    <None Include="shaders\svgf_atrous.comp" />
+    <None Include="shaders\svgf_temporal.comp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md" />

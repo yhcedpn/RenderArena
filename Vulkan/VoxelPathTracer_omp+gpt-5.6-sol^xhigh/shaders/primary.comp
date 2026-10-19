@@ -1,0 +1,59 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint pixel = linearInvocationIndex();
+    if (pixel >= pixelCount()) return;
+    FrameData frame = frames[pc.frameSlot];
+    uint x = pixel % pc.width;
+    uint y = pixel / pc.width;
+    vec2 jitter = frame.jitterAndTime.xy;
+    vec2 ndc = (vec2(float(x), float(y)) + vec2(0.5) + jitter) / vec2(pc.width, pc.height) * 2.0 - 1.0;
+    vec3 direction = normalize(frame.cameraForwardAspect.xyz
+        + frame.cameraRightWidth.xyz * (ndc.x * frame.cameraPositionTanFov.w * frame.cameraForwardAspect.w)
+        - frame.cameraUpHeight.xyz * (ndc.y * frame.cameraPositionTanFov.w));
+
+    PathState path;
+    path.originTmin = vec4(frame.cameraPositionTanFov.xyz, 0.05 / max(dot(direction, frame.cameraForwardAspect.xyz), 1e-4));
+    path.directionCone = vec4(direction, 2.0 * frame.cameraPositionTanFov.w / float(pc.height));
+    path.throughputPdf = vec4(1.0, 1.0, 1.0, 0.0);
+    path.identity = uvec4(pixel, 0u, 0u, 0u);
+    bool insideGlass = all(greaterThan(frame.cameraPositionTanFov.xyz, vec3(7.0, 0.125, 7.0)))
+        && all(lessThan(frame.cameraPositionTanFov.xyz, vec3(9.0, 2.125, 9.0)));
+    path.flags = uvec4(insideGlass ? 1u : 0u, 0u, 0u, 0u);
+    path.transform0 = vec4(1.0, 0.0, 0.0, 0.0);
+    path.transform1 = vec4(0.0, 1.0, 0.0, 0.0);
+    path.transform2 = vec4(0.0, 0.0, 1.0, 0.0);
+    path.chain = uvec4(0u, 0u, frame.frameInfo.x, 0u);
+    pathsA[pixel] = path;
+
+    BranchOutput cleared;
+    cleared.signal0 = vec4(0.0);
+    cleared.signal1 = vec4(0.0);
+    cleared.signal2 = vec4(0.0);
+    cleared.signal3 = vec4(0.0);
+    cleared.emission = vec4(0.0);
+    cleared.guide.worldValid = vec4(0.0);
+    cleared.guide.virtualDepth = vec4(0.0);
+    cleared.guide.normalRoughness = vec4(0.0);
+    cleared.guide.identity = uvec4(INVALID_ID);
+    cleared.guideMeta = uvec4(INVALID_ID);
+    branchOutputs[branchIndex(pixel, 0u)] = cleared;
+    branchOutputs[branchIndex(pixel, 1u)] = cleared;
+
+    Surface surface;
+    surface.positionValid = vec4(0.0);
+    surface.normalRoughness = vec4(0.0);
+    surface.albedoType = vec4(0.0);
+    surface.identity = uvec4(INVALID_ID);
+    surfaces[surfaceIndex(pc.frameParity, pixel)] = surface;
+
+    if (pixel == 0u) {
+        currentCount = pixelCount();
+        nextCount = 0u;
+        shadowCount = 0u;
+        overflowed = 0u;
+    }
+}
