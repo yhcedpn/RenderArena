@@ -12,7 +12,5 @@
     <Project Path="Vulkan/VoxelPathTracer_codex+gpt-6.1-terra^max/VoxelPathTracer_codex+gpt-6.1-terra^max.vcxproj" Id="848a8025-8e14-4187-9ef3-02809d5e91f4" />
     <Project Path="Vulkan/VoxelPathTracer_codex+gpt-6.1-sol^xhigh/VoxelPathTracer_codex+gpt-6.1-sol^xhigh.vcxproj" Id="7ee0f6b8-4094-4801-9e3d-93a694085c8e" />
     <Project Path="Vulkan/VoxelPathTracer_codex+gpt-6.1-sol^max/VoxelPathTracer_codex+gpt-6.1-sol^max.vcxproj" Id="7da8fdc9-642a-43cf-be04-1b945d664df8" />
-    <Project Path="Vulkan/VoxelPathTracer_codex+gpt-6-astra^xhigh/VoxelPathTracer_codex+gpt-6-astra^xhigh.vcxproj" Id="211415fb-f479-479c-b3c4-3a790dfbe2b9" />
-    <Project Path="Vulkan/VoxelPathTracer_codex+gpt-6-astra^max/VoxelPathTracer_codex+gpt-6-astra^max.vcxproj" Id="a782d55f-b07b-488e-9e85-689f49599773" />
   </Folder>
 </Solution>
