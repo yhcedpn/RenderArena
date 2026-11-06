@@ -37,3 +37,4 @@ Vulkan 1.4 体素展厅路径追踪任务。答卷需在单窗口程序中实现
 | 工具、模型与思考挡位 | 排除原因 | 留存产物 |
 | --- | --- | --- |
 | Codex + gpt-5.6-sol^max | 交互核验阶段读取了任务目录外的 computer-use 操作说明，超出隔离读取边界 | [源码](https://github.com/yhcedpn/RenderArena/tree/3bbd3bbd04b368d0a7ed07985a5286419eaeaf89/Vulkan/VoxelPathTracer_codex+gpt-5.6-sol^max)、[实现与核验记录](https://github.com/yhcedpn/RenderArena/blob/3bbd3bbd04b368d0a7ed07985a5286419eaeaf89/Vulkan/VoxelPathTracer_codex+gpt-5.6-sol^max/IMPLEMENTATION.md) |
+| Codex + gpt-5.6-sol^max | 窗口截图的前景切换失败，查看的图像混入任务外界面 | [源码](https://github.com/yhcedpn/RenderArena/tree/f69a1bd8d483ef17321b9ee569ed03d35ec930a3/Vulkan/VoxelPathTracer_codex+gpt-5.6-sol^max)、[实现与核验记录](https://github.com/yhcedpn/RenderArena/blob/f69a1bd8d483ef17321b9ee569ed03d35ec930a3/Vulkan/VoxelPathTracer_codex+gpt-5.6-sol^max/IMPLEMENTATION.md) |
