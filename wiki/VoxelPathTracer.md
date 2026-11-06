@@ -18,6 +18,8 @@ Vulkan 1.4 体素展厅路径追踪任务。答卷需在单窗口程序中实现
 
 完整规格见[题面](https://github.com/yhcedpn/RenderArena/blob/main/Tasks/VoxelPathTracer_TASK.md)。
 
+各工具、模型与思考挡位的源码、实现说明和核验结论见 [Vulkan 答卷列表](https://github.com/yhcedpn/RenderArena/wiki/Vulkan#现有答卷)。
+
 ## 必需机制
 
 | 机制 | 核验关注点 |

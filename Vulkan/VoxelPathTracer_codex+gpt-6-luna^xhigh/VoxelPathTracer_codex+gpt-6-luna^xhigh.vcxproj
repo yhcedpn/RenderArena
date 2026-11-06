@@ -26,6 +26,10 @@
   <Import Project="..\..\cmake\RenderArena.props" />
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\camera.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClInclude Include="src\camera.hpp" />
+    <ClInclude Include="src\scene.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md" />
