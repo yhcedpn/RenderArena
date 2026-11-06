@@ -1,0 +1,83 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+vec3 demodulate(vec3 radiance, Guide guide) {
+    if (guide.identity.y >= pc.extra.y || materials[guide.identity.y].metadata.x != MATERIAL_DIFFUSE) return radiance;
+    return vec3(guide.albedoValidity.x > 0.0 ? radiance.x / guide.albedoValidity.x : 0.0,
+                guide.albedoValidity.y > 0.0 ? radiance.y / guide.albedoValidity.y : 0.0,
+                guide.albedoValidity.z > 0.0 ? radiance.z / guide.albedoValidity.z : 0.0);
+}
+
+void main() {
+    uint invocation = gl_GlobalInvocationID.x;
+    uint total = pixelCount() * SVGF_DOMAIN_COUNT;
+    if (invocation >= total) return;
+    uint domainIndex = invocation / pixelCount();
+    uint pixel = invocation - domainIndex * pixelCount();
+    uint domain = signalDomainFromIndex(domainIndex);
+    BranchRecord currentBranch = branchForDomain(currentBranchBase(), pixel, domain);
+    Guide currentGuide = currentBranch.guide;
+    vec3 currentRadiance = demodulate(rawSignal(currentBranchBase(), pixel, domain), currentGuide);
+    float currentLuminance = luminance(currentRadiance);
+
+    bool historyValid = (camera.frame.w & 1u) != 0u && currentGuide.albedoValidity.w >= 0.5;
+    if (domain == DOMAIN_GLASS_TRANSMISSION && (camera.frame.w & 2u) != 0u) historyValid = false;
+    SvgfHistory previous;
+    previous.radianceVariance = vec4(0.0);
+    previous.momentsLength = vec4(0.0);
+    if (historyValid) {
+        ivec2 previousCoordinate = reprojectPrevious(currentGuide, pixelCoordinate(pixel), domain);
+        if (!inFramebuffer(previousCoordinate)) {
+            historyValid = false;
+        } else {
+            uint previousPixel = linearPixel(previousCoordinate);
+            BranchRecord previousBranch = branchForDomain(previousBranchBase(), previousPixel, domain);
+            if (!guidesCompatible(currentGuide, previousBranch.guide)) {
+                historyValid = false;
+            } else {
+                previous = svgfHistory[svgfBase(1u - frameParity(), domainIndex) + previousPixel];
+                historyValid = previous.momentsLength.z >= 1.0;
+            }
+        }
+    }
+
+    float historyLength = historyValid ? min(previous.momentsLength.z + 1.0, 32.0) : 1.0;
+    float alpha = historyValid ? max(1.0 / historyLength, 1.0 / 32.0) : 1.0;
+    vec3 accumulated = mix(previous.radianceVariance.xyz, currentRadiance, alpha);
+    float firstMoment = mix(previous.momentsLength.x, currentLuminance, alpha);
+    float secondMoment = mix(previous.momentsLength.y, currentLuminance * currentLuminance, alpha);
+    float variance = max(secondMoment - firstMoment * firstMoment, 0.0);
+
+    if (historyLength < 4.0 && currentGuide.albedoValidity.w >= 0.5) {
+        ivec2 center = pixelCoordinate(pixel);
+        float localFirst = 0.0;
+        float localSecond = 0.0;
+        float localCount = 0.0;
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec2 coordinate = center + ivec2(x, y);
+                if (!inFramebuffer(coordinate)) continue;
+                uint neighborPixel = linearPixel(coordinate);
+                BranchRecord neighbor = branchForDomain(currentBranchBase(), neighborPixel, domain);
+                if (!guidesCompatible(currentGuide, neighbor.guide)) continue;
+                vec3 value = demodulate(rawSignal(currentBranchBase(), neighborPixel, domain), neighbor.guide);
+                float l = luminance(value);
+                localFirst += l;
+                localSecond += l * l;
+                localCount += 1.0;
+            }
+        }
+        if (localCount > 1.0) {
+            localFirst /= localCount;
+            localSecond /= localCount;
+            variance = max(variance, max(localSecond - localFirst * localFirst, 0.0));
+        }
+    }
+    SvgfHistory outputValue;
+    outputValue.radianceVariance = vec4(accumulated, variance);
+    outputValue.momentsLength = vec4(firstMoment, secondMoment, historyLength, currentGuide.albedoValidity.w);
+    svgfHistory[svgfBase(frameParity(), domainIndex) + pixel] = outputValue;
+}

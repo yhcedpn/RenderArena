@@ -1,0 +1,39 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    BranchRecord branch = branchRecords[currentBranchBase() + pixel * 2u];
+    Reservoir reservoir = reservoirHistory[reservoirBase(frameParity()) + pixel];
+    if (reservoir.statistics.w < 0.5 || reservoir.identity.x >= lightCount() ||
+        branch.guide.albedoValidity.w < 0.5) return;
+    float target;
+    float proposalArea;
+    vec3 unoccluded = evaluateDirectAtGuide(branch.guide, reservoir.identity.x, reservoir.selected.xy,
+                                            target, proposalArea);
+    if (target <= 0.0 || reservoir.selected.w <= 0.0) return;
+    Light light = lights[reservoir.identity.x];
+    vec3 lightPoint = lightPosition(light, reservoir.selected.xy);
+    vec3 delta = lightPoint - branch.guide.positionDistance.xyz;
+    float distanceValue = length(delta);
+    if (distanceValue <= 1e-5) return;
+    uint destination = atomicAdd(shadowCount, 1u);
+    if (destination >= branchCapacity()) {
+        atomicOr(overflowFlag, 4u);
+        return;
+    }
+    vec3 direction = delta / distanceValue;
+    float epsilon = 0.0002 + 0.00001 * max(abs(branch.guide.positionDistance.x),
+                         max(abs(branch.guide.positionDistance.y), abs(branch.guide.positionDistance.z)));
+    ShadowTask task;
+    task.originTMax = vec4(branch.guide.positionDistance.xyz + branch.guide.normalRoughness.xyz * epsilon,
+                           max(distanceValue - 2.0 * epsilon, epsilon));
+    task.direction = vec4(direction, 0.0);
+    task.contribution = vec4(unoccluded * reservoir.selected.w, 0.0);
+    task.identity = uvec4(pixel * 2u, branch.metadata.x, 1u, 0u);
+    shadowTasks[destination] = task;
+}

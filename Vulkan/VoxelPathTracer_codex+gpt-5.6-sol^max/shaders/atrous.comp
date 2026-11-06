@@ -1,0 +1,75 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+vec4 readFilterValue(uint iteration, uint domainIndex, uint pixel) {
+    if (iteration == 0u) return svgfHistory[svgfBase(frameParity(), domainIndex) + pixel].radianceVariance;
+    return (iteration & 1u) != 0u ? atrousA[atrousIndex(domainIndex, pixel)]
+                                 : atrousB[atrousIndex(domainIndex, pixel)];
+}
+
+void writeFilterValue(uint iteration, uint domainIndex, uint pixel, vec4 value) {
+    if ((iteration & 1u) == 0u) atrousA[atrousIndex(domainIndex, pixel)] = value;
+    else atrousB[atrousIndex(domainIndex, pixel)] = value;
+}
+
+float kernel(int offset) {
+    const float weights[5] = float[5](1.0, 4.0, 6.0, 4.0, 1.0);
+    return weights[offset + 2] * (1.0 / 16.0);
+}
+
+void main() {
+    uint invocation = gl_GlobalInvocationID.x;
+    uint total = pixelCount() * SVGF_DOMAIN_COUNT;
+    if (invocation >= total) return;
+    uint domainIndex = invocation / pixelCount();
+    uint pixel = invocation - domainIndex * pixelCount();
+    uint domain = signalDomainFromIndex(domainIndex);
+    uint iteration = pc.params.y;
+    int stepWidth = int(pc.params.w);
+    BranchRecord centerBranch = branchForDomain(currentBranchBase(), pixel, domain);
+    Guide centerGuide = centerBranch.guide;
+    vec4 centerValue = readFilterValue(iteration, domainIndex, pixel);
+    if (centerGuide.albedoValidity.w < 0.5) {
+        writeFilterValue(iteration, domainIndex, pixel, centerValue);
+        return;
+    }
+
+    vec3 radianceSum = vec3(0.0);
+    float varianceSum = 0.0;
+    float weightSum = 0.0;
+    ivec2 centerCoordinate = pixelCoordinate(pixel);
+    float centerLuminance = luminance(centerValue.xyz);
+    for (int ky = -2; ky <= 2; ++ky) {
+        for (int kx = -2; kx <= 2; ++kx) {
+            ivec2 coordinate = centerCoordinate + ivec2(kx, ky) * stepWidth;
+            if (!inFramebuffer(coordinate)) continue;
+            uint neighborPixel = linearPixel(coordinate);
+            BranchRecord neighborBranch = branchForDomain(currentBranchBase(), neighborPixel, domain);
+            if (!guidesCompatible(centerGuide, neighborBranch.guide)) continue;
+            vec4 neighborValue = readFilterValue(iteration, domainIndex, neighborPixel);
+            float baseWeight = kernel(kx) * kernel(ky);
+            float positionScale = 0.02 + 0.01 * max(centerGuide.positionDistance.w, 0.0);
+            float positionWeight = exp(-distance(centerGuide.positionDistance.xyz,
+                                                neighborBranch.guide.positionDistance.xyz) / positionScale);
+            float normalWeight = pow(max(dot(centerGuide.normalRoughness.xyz,
+                                             neighborBranch.guide.normalRoughness.xyz), 0.0), 32.0);
+            float roughnessWeight = exp(-abs(centerGuide.normalRoughness.w -
+                                             neighborBranch.guide.normalRoughness.w) * 16.0);
+            float sigma = sqrt(max(centerValue.w + neighborValue.w, 1e-8)) + 0.01;
+            float luminanceWeight = exp(-abs(centerLuminance - luminance(neighborValue.xyz)) / sigma);
+            float weight = baseWeight * positionWeight * normalWeight * roughnessWeight * luminanceWeight;
+            radianceSum += neighborValue.xyz * weight;
+            varianceSum += neighborValue.w * weight * weight;
+            weightSum += weight;
+        }
+    }
+    if (weightSum <= 1e-12) {
+        writeFilterValue(iteration, domainIndex, pixel, centerValue);
+    } else {
+        writeFilterValue(iteration, domainIndex, pixel,
+                         vec4(radianceSum / weightSum, varianceSum / (weightSum * weightSum)));
+    }
+}

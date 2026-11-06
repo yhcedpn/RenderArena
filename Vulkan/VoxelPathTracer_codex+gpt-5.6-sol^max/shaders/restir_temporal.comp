@@ -1,0 +1,43 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "restir_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    BranchRecord currentBranch = branchRecords[currentBranchBase() + pixel * 2u];
+    Reservoir sources[5];
+    Guide sourceGuides[5];
+    for (uint i = 0u; i < 5u; ++i) {
+        sources[i] = invalidReservoir();
+        sourceGuides[i] = invalidGuide();
+    }
+    sources[0] = reservoirInitial[pixel];
+    sourceGuides[0] = currentBranch.guide;
+    uint count = 1u;
+
+    bool historyAvailable = (camera.frame.w & 1u) != 0u;
+    if (historyAvailable && currentBranch.guide.albedoValidity.w >= 0.5) {
+        ivec2 currentCoordinate = pixelCoordinate(pixel);
+        ivec2 previousCoordinate = reprojectPrevious(currentBranch.guide, currentCoordinate, currentBranch.metadata.x);
+        if (inFramebuffer(previousCoordinate)) {
+            uint previousPixel = linearPixel(previousCoordinate);
+            BranchRecord previousBranch = branchForDomain(previousBranchBase(), previousPixel, currentBranch.metadata.x);
+            Reservoir history = reservoirHistory[reservoirBase(1u - frameParity()) + previousPixel];
+            if (guidesCompatible(currentBranch.guide, previousBranch.guide) && history.statistics.w >= 0.5) {
+                if (history.statistics.z > 32.0) {
+                    float ratio = 32.0 / history.statistics.z;
+                    history.statistics.x *= ratio;
+                    history.statistics.z = 32.0;
+                }
+                sources[count] = history;
+                sourceGuides[count] = previousBranch.guide;
+                count += 1u;
+            }
+        }
+    }
+    reservoirTemporal[pixel] = combineReservoirs(currentBranch.guide, sources, sourceGuides,
+                                                  count, pixel, 80u);
+}

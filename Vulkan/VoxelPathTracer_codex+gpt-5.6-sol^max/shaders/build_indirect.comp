@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    if (pc.params.y == 0u) {
+        uint count = queueCount(pc.params.x);
+        indirectArguments[0] = uvec4(max(count, 1u), 1u, 1u, 0u);
+        indirectArguments[1] = uvec4(max((count + 63u) / 64u, 1u), 1u, 1u, 0u);
+    } else {
+        indirectArguments[2] = uvec4(max(shadowCount, 1u), 1u, 1u, 0u);
+        indirectArguments[3] = uvec4(max((shadowCount + 63u) / 64u, 1u), 1u, 1u, 0u);
+    }
+}

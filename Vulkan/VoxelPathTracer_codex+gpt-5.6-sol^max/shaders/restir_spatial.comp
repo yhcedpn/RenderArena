@@ -1,0 +1,37 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "restir_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    BranchRecord targetBranch = branchRecords[currentBranchBase() + pixel * 2u];
+    Reservoir sources[5];
+    Guide sourceGuides[5];
+    for (uint i = 0u; i < 5u; ++i) {
+        sources[i] = invalidReservoir();
+        sourceGuides[i] = invalidGuide();
+    }
+    sources[0] = reservoirTemporal[pixel];
+    sourceGuides[0] = targetBranch.guide;
+    uint count = 1u;
+    ivec2 coordinate = pixelCoordinate(pixel);
+    for (uint neighbor = 0u; neighbor < 4u; ++neighbor) {
+        float angle = randomDimension(pixel, 0u, camera.frame.z, 100u + neighbor * 2u) * 6.28318530718;
+        float radial = 1.0 + floor(randomDimension(pixel, 0u, camera.frame.z, 101u + neighbor * 2u) * 8.0);
+        ivec2 offset = ivec2(round(vec2(cos(angle), sin(angle)) * radial));
+        if (all(equal(offset, ivec2(0)))) offset.x = 1;
+        ivec2 neighborCoordinate = coordinate + offset;
+        if (!inFramebuffer(neighborCoordinate)) continue;
+        uint neighborPixel = linearPixel(neighborCoordinate);
+        BranchRecord neighborBranch = branchForDomain(currentBranchBase(), neighborPixel, targetBranch.metadata.x);
+        if (!guidesCompatible(targetBranch.guide, neighborBranch.guide)) continue;
+        sources[count] = reservoirTemporal[neighborPixel];
+        sourceGuides[count] = neighborBranch.guide;
+        count += 1u;
+    }
+    reservoirHistory[reservoirBase(frameParity()) + pixel] =
+        combineReservoirs(targetBranch.guide, sources, sourceGuides, count, pixel, 120u);
+}

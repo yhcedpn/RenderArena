@@ -1,0 +1,49 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    BranchRecord branch = branchRecords[currentBranchBase() + pixel * 2u];
+    if (branch.guide.albedoValidity.w < 0.5 ||
+        (branch.metadata.x != DOMAIN_ORDINARY_DIFFUSE && branch.metadata.x != DOMAIN_ORDINARY_SPECULAR)) {
+        reservoirInitial[pixel] = invalidReservoir();
+        return;
+    }
+
+    float weightSum = 0.0;
+    float validMultiplicity = 0.0;
+    uint selectedLight = INVALID_INDEX;
+    vec2 selectedBary = vec2(0.0);
+    float selectedTarget = 0.0;
+    for (uint candidate = 0u; candidate < 4u; ++candidate) {
+        uint lightIndex = selectLight(randomDimension(pixel, 0u, camera.frame.z, candidate * 3u + 0u));
+        vec2 bary = sampleTriangle(randomDimension(pixel, 0u, camera.frame.z, candidate * 3u + 1u),
+                                   randomDimension(pixel, 0u, camera.frame.z, candidate * 3u + 2u));
+        float target;
+        float proposalArea;
+        evaluateDirectAtGuide(branch.guide, lightIndex, bary, target, proposalArea);
+        validMultiplicity += 1.0;
+        float weight = proposalArea > 0.0 ? target / proposalArea : 0.0;
+        if (!(weight > 0.0) || isnan(weight) || isinf(weight)) continue;
+        weightSum += weight;
+        if (randomDimension(pixel, 0u, camera.frame.z, 16u + candidate) * weightSum < weight) {
+            selectedLight = lightIndex;
+            selectedBary = bary;
+            selectedTarget = target;
+        }
+    }
+    if (selectedLight == INVALID_INDEX || selectedTarget <= 0.0 || validMultiplicity <= 0.0) {
+        reservoirInitial[pixel] = invalidReservoir();
+        return;
+    }
+    Reservoir result;
+    float normalization = weightSum / (validMultiplicity * selectedTarget);
+    result.selected = vec4(selectedBary, selectedTarget, normalization);
+    result.statistics = vec4(weightSum, weightSum / validMultiplicity, validMultiplicity, 1.0);
+    result.identity = uvec4(selectedLight, pixel, branch.guide.identity.x, branch.guide.identity.y);
+    reservoirInitial[pixel] = result;
+}
