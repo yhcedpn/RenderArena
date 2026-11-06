@@ -102,4 +102,6 @@ RenderArena/
 | `CMakeLists.txt`、`CMakePresets.json` | 构建入口，引用共享预设 |
 | `bin/`、`obj/` | 构建产物、中间文件和依赖安装树 |
 
-答卷目录以 `<题目>_<工具>+<模型>^<思考挡位>` 格式命名，例如 `Vulkan/VoxelPathTracer_omp+deepseek-v4.1-flash-1017^max`。
+答卷目录以 `<题目>_<工具>+<模型>^<思考挡位>` 格式命名，例如 `Vulkan/VoxelPathTracer_codex+gpt-5.6-sol^max`。`codex` 表示 Codex，`omp` 表示 omp；工具、模型与思考挡位共同标识一份独立答卷。
+
+Codex 测评为每个模型与思考挡位创建独立新会话，串行执行。组织者提供空源码骨架、相同题面与材质，以及各答卷独立的依赖安装树；模型完成实现、构建、运行检查与实现说明。
