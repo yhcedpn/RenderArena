@@ -1,0 +1,8 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=1) in;
+void dims(uint n,uint offset){uint w=max(1u,min(n,65535u));counts[offset]=w;counts[offset+1]=max(1u,(n+w-1)/w);counts[offset+2]=1;}
+void main(){if(pc.phase==0u){counts[pc.queue^1u]=0;counts[2]=0;dims(counts[pc.queue],4);uint groups=(counts[pc.queue]+63)/64;counts[12]=min(groups,65535u);counts[13]=max(1u,(groups+65534u)/65535u);counts[14]=1;}else {dims(counts[2],8);uint groups=(counts[2]+63)/64;counts[16]=min(groups,65535u);counts[17]=max(1u,(groups+65534u)/65535u);counts[18]=1;}}
+
+

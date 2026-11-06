@@ -12,4 +12,24 @@
     <None Include="VoxelPathTracer_TASK.md"><Filter>资源文件</Filter></None>
     <None Include="materials.json"><Filter>资源文件</Filter></None>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\renderer.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClInclude Include="src\renderer.hpp"><Filter>头文件</Filter></ClInclude>
+    <ClCompile Include="src\scene.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClInclude Include="src\scene.hpp"><Filter>头文件</Filter></ClInclude>
+    <None Include="shaders\common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\denoise.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\init.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\path.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\path.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\prepare.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shade.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\surface.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\visibility.comp"><Filter>源文件</Filter></None>
+  </ItemGroup>
 </Project>

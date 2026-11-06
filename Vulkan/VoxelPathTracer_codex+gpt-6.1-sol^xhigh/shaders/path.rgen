@@ -1,0 +1,8 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_ray_tracing : require
+#include "common.glsl"
+layout(set=0,binding=0) uniform accelerationStructureEXT world;
+layout(location=0) rayPayloadEXT Hit payload;
+void main(){uint i=gl_LaunchIDEXT.y*gl_LaunchSizeEXT.x+gl_LaunchIDEXT.x;if(i>=counts[pc.queue])return;uint slot=queues[pc.queue*capacity()+i];Path p=paths[slot];payload.id=uvec4(INVALID);payload.data=vec4(0);float nearT=pc.stage==0u?0.05/dot(p.d.xyz,params.forward.xyz):0.00001;traceRayEXT(world,gl_RayFlagsOpaqueEXT,255,0,0,0,p.o.xyz,nearT,p.d.xyz,10000,0);hits[slot]=payload;}
+

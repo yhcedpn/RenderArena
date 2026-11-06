@@ -1,0 +1,16 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=64) in;
+void main(){uint slot=(gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u);if(slot>=signals())return;uint pixel=slot%pixels(),domain=slot/pixels();Guide g=guides[currentGuide(slot)];vec3 raw=demod(radiance[slot].rgb,g);uint parity=params.size.z&1u;uint dst=parity*signals()+slot;
+ if(pc.phase==0u){History h;h.value=vec4(raw,0);float l=luminance(raw);h.moments=vec4(l,l*l,1,0);bool valid=params.size.w==0u&&g.p.w!=0&&(g.id.w&(16u|64u))==0u&&!((g.id.w&4u)!=0u&&params.config.w!=0u);ivec2 q=historyPixel(pixel,g);valid=valid&&inside(q);if(valid){uint oldSlot=domain*pixels()+uint(q.y)*params.size.x+uint(q.x);Guide oldG=guides[oldGuide(oldSlot)];valid=compatible(g,oldG,true);if(valid){History old=histories[(parity^1u)*signals()+oldSlot];float length=min(old.moments.z+1,32),a=1/length;h.value.rgb=mix(old.value.rgb,raw,a);h.moments=vec4(mix(old.moments.xy,vec2(l,l*l),a),length,0);}}
+ h.moments.w=max(h.moments.y-h.moments.x*h.moments.x,0);histories[dst]=h;return;}
+ if(pc.phase==1u){History h=histories[dst];float variance=h.moments.w;if(h.moments.z<4&&g.p.w!=0&&(g.id.w&16u)==0u){float wsum=0,m1=0,m2=0;ivec2 xy=ivec2(pixel%params.size.x,pixel/params.size.x);for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x){ivec2 p=xy+ivec2(x,y);if(!inside(p))continue;uint ns=domain*pixels()+uint(p.y)*params.size.x+uint(p.x);Guide ng=guides[currentGuide(ns)];if(!compatible(g,ng,false))continue;float w=exp(-float(x*x+y*y)/8);vec3 v=demod(radiance[ns].rgb,ng);float l=luminance(v);m1+=w*l;m2+=w*l*l;wsum+=w;}if(wsum>0)variance=max(variance,max(m2/wsum-pow(m1/wsum,2),0));}filtered[slot]=vec4(h.value.rgb,variance);return;}
+ uint inBase=(pc.step&1u)*signals(),outBase=((pc.step&1u)^1u)*signals();vec4 center=filtered[inBase+slot];if(g.p.w==0||(g.id.w&16u)!=0u){filtered[outBase+slot]=center;return;}
+ int stride=1<<pc.step;ivec2 xy=ivec2(pixel%params.size.x,pixel/params.size.x);const float kernel[5]=float[5](1,4,6,4,1);vec3 value=vec3(0);float variance=0,wsum=0;float l=luminance(center.rgb);float footprint=2*params.lens.x*max(length(g.p.xyz-params.eye.xyz),1)/float(params.size.y);
+ for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x){ivec2 p=xy+ivec2(x,y)*stride;if(!inside(p))continue;uint ns=domain*pixels()+uint(p.y)*params.size.x+uint(p.x);Guide ng=guides[currentGuide(ns)];if(!compatible(g,ng,false))continue;vec4 v=filtered[inBase+ns];float depth=abs(dot(g.p.xyz-ng.p.xyz,g.n.xyz));float normalWeight=pow(max(dot(g.n.xyz,ng.n.xyz),0),32);float roughWeight=exp(-abs(g.n.w-ng.n.w)/0.08);
+ // 亮度稳定项为辐亮度单位的 1e-4，几何项是世界单位；方差随平方权重传播。
+ float colorWeight=exp(-abs(l-luminance(v.rgb))/(4*sqrt(max(center.w+v.w,0))+0.0001));float w=kernel[x+2]*kernel[y+2]/256*normalWeight*roughWeight*exp(-depth/(0.02+footprint*float(stride)))*colorWeight;value+=w*v.rgb;variance+=w*w*v.w;wsum+=w;}
+ filtered[outBase+slot]=wsum>0?vec4(value/wsum,variance/(wsum*wsum)):center;
+}
+

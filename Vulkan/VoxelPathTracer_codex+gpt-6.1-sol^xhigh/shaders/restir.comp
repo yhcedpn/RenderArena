@@ -1,0 +1,21 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=64) in;
+void main(){uint pixel=(gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u);if(pixel>=pixels())return;uint N=pixels(),parity=params.size.z&1u;Guide g=guides[currentGuide(pixel)];uint rng=seed(pixel,2048u+pc.phase);Reservoir outR;outR.chosen=vec4(0);outR.stats=vec4(0);uint dst=pc.phase==0u?N+pixel:(2u+parity)*N+pixel;
+ if(g.p.w==0||g.id.z!=0u||(g.id.w&(2u|16u|32u))!=0u){reservoirs[dst]=outR;return;}
+ Reservoir src[5];Guide sourceGuide[5];vec3 sourceEye[5];int count=1;
+ src[0]=reservoirs[pc.phase==0u?pixel:N+pixel];sourceGuide[0]=g;sourceEye[0]=params.eye.xyz;
+ if(pc.phase==0u){ivec2 old=historyPixel(pixel,g);if(params.size.w==0u&&inside(old)){uint i=uint(old.y)*params.size.x+uint(old.x);Guide oldG=guides[oldGuide(i)];if(compatible(g,oldG,true)){Reservoir r=reservoirs[(2u+(parity^1u))*N+i];float scale=r.stats.y>32?32/r.stats.y:1;r.stats.xy*=scale;src[count]=r;sourceGuide[count]=oldG;sourceEye[count]=params.oldEye.xyz;++count;}}}
+ else {ivec2 xy=ivec2(pixel%params.size.x,pixel/params.size.x);for(int k=0;k<4;++k){float angle=(float(k)+random(rng))*PI*0.5;float radius=1+7*random(rng);ivec2 offset=ivec2(round(vec2(cos(angle),sin(angle))*radius));if(dot(vec2(offset),vec2(offset))>64)offset=ivec2(vec2(offset)*8/length(vec2(offset)));ivec2 q=xy+offset;if(!inside(q))continue;uint i=uint(q.y)*params.size.x+uint(q.x);Guide ng=guides[currentGuide(i)];if(!compatible(g,ng,false))continue;src[count]=reservoirs[N+i];sourceGuide[count]=ng;sourceEye[count]=params.eye.xyz;++count;}}
+ float sum=0,M=0;for(int i=0;i<count;++i){float w=target(g,src[i].chosen,params.eye.xyz)*src[i].stats.z*src[i].stats.y;sum+=w;M+=src[i].stats.y;if(w>0&&random(rng)*sum<w)outR.chosen=src[i].chosen;}
+ // 无偏支持域修正：Z 只计入在最终样本处 target>0 的 source multiplicity。
+ // 与简单 sum(M) 区别在背向 BSDF / 发光面以及互不重叠支持域。
+ float Z=0;for(int i=0;i<count;++i)if(target(sourceGuide[i],outR.chosen,sourceEye[i])>0)Z+=src[i].stats.y;
+ float t=target(g,outR.chosen,params.eye.xyz);float W=t>0&&Z>0?sum/(t*Z):0;
+ // 保存经过支持校正后等价的代表质量，缩减 M 时同步缩减质量，W 保持不变。
+ outR.stats=vec4(W*t*M,M,W,0);reservoirs[dst]=outR;
+}
+
+
+

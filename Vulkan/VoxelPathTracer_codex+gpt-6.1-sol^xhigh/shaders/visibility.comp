@@ -1,0 +1,9 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=64) in;
+void main(){uint i=(gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u);if(pc.phase==0u){if(i>=pixels())return;Reservoir r=reservoirs[(2u+(params.size.z&1u))*pixels()+i];if(r.chosen.w==0||r.stats.z<=0)return;Guide g=guides[currentGuide(i)];vec3 wi;float distance,pdf;vec3 c=directValue(g,r.chosen,params.eye.xyz,wi,distance,pdf)*r.stats.z;if(max(max(c.x,c.y),c.z)<=0)return;uint s=atomicAdd(counts[2],1);vec3 o=offsetRay(g.real.xyz,g.n.xyz,wi);shadows[s].o=vec4(o,0);shadows[s].d=vec4(wi,max(0.00001,distance-dot(o-g.real.xyz,wi)-0.0004));shadows[s].value=vec4(c,0);shadows[s].id=uvec4(i,0,0,0);}
+ else {if(i>=counts[2])return;Shadow s=shadows[i];if(s.value.w>0)radiance[s.id.x].rgb+=s.value.rgb;}// 一阶段每个 signal 至多一条 shadow；分支 slot 互不重叠。
+}
+
+
