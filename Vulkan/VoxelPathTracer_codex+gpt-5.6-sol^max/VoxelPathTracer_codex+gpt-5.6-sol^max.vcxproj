@@ -26,6 +26,39 @@
   <Import Project="..\..\cmake\RenderArena.props" />
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\materials.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClCompile Include="src\vulkan_app.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\materials.hpp" />
+    <ClInclude Include="src\math.hpp" />
+    <ClInclude Include="src\scene.hpp" />
+    <ClInclude Include="src\vulkan_app.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\atrous.comp" />
+    <None Include="shaders\commit_history.comp" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\compose.comp" />
+    <None Include="shaders\continuation.rgen" />
+    <None Include="shaders\display.frag" />
+    <None Include="shaders\fullscreen.vert" />
+    <None Include="shaders\make_indirect.comp" />
+    <None Include="shaders\primary.rgen" />
+    <None Include="shaders\radiance.rchit" />
+    <None Include="shaders\radiance.rmiss" />
+    <None Include="shaders\resolve_branches.comp" />
+    <None Include="shaders\restir_initial.comp" />
+    <None Include="shaders\restir_shadow.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\restir.glsl" />
+    <None Include="shaders\shade.comp" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\shadow.rmiss" />
+    <None Include="shaders\svgf_temporal.comp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md" />

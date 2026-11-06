@@ -1,0 +1,111 @@
+#version 460
+#include "restir.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+Reservoir previousReservoir(uint index) {
+    return globals.flags.z == 0u ? reservoirHistory0[index] : reservoirHistory1[index];
+}
+
+GuidePixel previousGuides(uint index) {
+    return globals.flags.z == 0u ? guidesHistory0[index] : guidesHistory1[index];
+}
+
+void considerCandidate(inout float sum, inout uvec4 selected, inout float selectedTarget,
+                       uvec4 candidateSample, float candidateWeight, RestirSurface targetSurface,
+                       uint pixel, uint randomDimension) {
+    if (candidateSample.w == 0u || candidateWeight <= 0.0 || isnan(candidateWeight)) return;
+    float target = evaluateLightSample(targetSurface, candidateSample).target;
+    if (target <= 0.0) return;
+    sum += candidateWeight;
+    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
+    if (randomFloat(pixel, frame, randomDimension, 0u) < candidateWeight / sum) {
+        selected = candidateSample;
+        selectedTarget = target;
+    }
+}
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    Reservoir current = reservoirInitial[pixel];
+    RestirSurface currentSurface = surfaceFromShading(shadingPoints[pixel]);
+    if (!currentSurface.valid || current.selected.w == 0u) {
+        reservoirTemporal[pixel] = emptyReservoir();
+        return;
+    }
+
+    bool historyValid = globals.flags.x == 0u;
+    Reservoir previous = emptyReservoir();
+    RestirSurface previousSurface;
+    previousSurface.valid = false;
+    if (historyValid) {
+        vec2 currentProjected = projectedPixel(globals.currentViewProjection,
+                                               currentSurface.position,
+                                               globals.jitterCurrentPrevious.xy);
+        vec2 previousProjected = projectedPixel(globals.previousViewProjection,
+                                                currentSurface.position,
+                                                globals.jitterCurrentPrevious.zw);
+        vec2 lookup = vec2(ivec2(uint(pixel) % globals.extentCounts.x,
+                                 uint(pixel) / globals.extentCounts.x)) +
+                      (previousProjected - currentProjected);
+        ivec2 previousPixel = ivec2(round(lookup));
+        if (all(greaterThanEqual(previousPixel, ivec2(0))) &&
+            all(lessThan(previousPixel, ivec2(globals.extentCounts.xy)))) {
+            uint previousIndex = uint(previousPixel.y) * globals.extentCounts.x +
+                                 uint(previousPixel.x);
+            Guide previousGuide = findGuide(previousGuides(previousIndex), currentSurface.domain);
+            previousSurface = surfaceFromGuide(previousGuide);
+            if (restirCompatible(currentSurface, previousSurface)) {
+                previous = previousReservoir(previousIndex);
+                if (previous.weights.z > 32.0) {
+                    float scale = 32.0 / previous.weights.z;
+                    previous.weights.x *= scale;
+                    previous.weights.z = 32.0;
+                }
+            } else {
+                previousSurface.valid = false;
+            }
+        }
+    }
+
+    RestirSurface surfaces[2] = RestirSurface[2](currentSurface, previousSurface);
+    Reservoir sources[2] = Reservoir[2](current, previous);
+    float sumWeights = 0.0;
+    uvec4 selected = uvec4(0u);
+    float selectedTarget = 0.0;
+    float totalMultiplicity = 0.0;
+    for (uint sourceIndex = 0u; sourceIndex < 2u; ++sourceIndex) {
+        Reservoir source = sources[sourceIndex];
+        if (!surfaces[sourceIndex].valid || source.selected.w == 0u ||
+            source.weights.z <= 0.0)
+            continue;
+        float denominator = 0.0;
+        for (uint support = 0u; support < 2u; ++support) {
+            if (!surfaces[support].valid || !restirCompatible(currentSurface, surfaces[support]))
+                continue;
+            float z = reservoirNormalizer(sources[support]);
+            if (z <= 0.0) continue;
+            float targetAtSupport = evaluateLightSample(surfaces[support], source.selected).target;
+            denominator += sources[support].weights.z * targetAtSupport / z;
+        }
+        float targetAtCurrent = evaluateLightSample(currentSurface, source.selected).target;
+        float candidateWeight = denominator > 0.0
+                                    ? targetAtCurrent * source.weights.z / denominator
+                                    : 0.0;
+        considerCandidate(sumWeights, selected, selectedTarget, source.selected,
+                          candidateWeight, currentSurface, pixel, 120u + sourceIndex);
+        totalMultiplicity += source.weights.z;
+    }
+
+    Reservoir resultReservoir = emptyReservoir();
+    if (selected.w != 0u && selectedTarget > 0.0 && sumWeights > 0.0) {
+        float cappedMultiplicity = min(totalMultiplicity, 32.0);
+        float recordedWeightSum = sumWeights;
+        if (totalMultiplicity > 32.0) recordedWeightSum *= 32.0 / totalMultiplicity;
+        resultReservoir.selected = selected;
+        resultReservoir.weights = vec4(recordedWeightSum, selectedTarget, cappedMultiplicity,
+                                       sumWeights / selectedTarget);
+    }
+    reservoirTemporal[pixel] = resultReservoir;
+}

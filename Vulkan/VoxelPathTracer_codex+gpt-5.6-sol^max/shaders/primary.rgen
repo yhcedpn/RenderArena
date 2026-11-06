@@ -1,0 +1,47 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#include "common.glsl"
+
+layout(set = 0, binding = 30) uniform accelerationStructureEXT sceneTlas;
+layout(location = 0) rayPayloadEXT uint payloadIndex;
+
+void main() {
+    uvec2 pixel = gl_LaunchIDEXT.xy;
+    if (pixel.x >= globals.extentCounts.x || pixel.y >= globals.extentCounts.y) return;
+    uint index = pixel.y * globals.extentCounts.x + pixel.x;
+    vec2 jitter = globals.jitterCurrentPrevious.xy;
+    vec2 samplePosition = vec2(pixel) + vec2(0.5) + jitter;
+    vec2 ndc = samplePosition / vec2(globals.extentCounts.xy) * 2.0 - 1.0;
+    vec3 forward = globals.cameraForwardTanHalfFov.xyz;
+    vec3 right = globals.cameraRightAspect.xyz;
+    vec3 up = globals.cameraUpNear.xyz;
+    float tanHalf = globals.cameraForwardTanHalfFov.w;
+    float aspect = globals.cameraRightAspect.w;
+    float nearPlane = globals.cameraUpNear.w;
+    vec3 nearPoint = globals.cameraPositionFrame.xyz + forward * nearPlane +
+                     right * (ndc.x * aspect * tanHalf * nearPlane) -
+                     up * (ndc.y * tanHalf * nearPlane);
+    vec3 direction = safeNormalize(nearPoint - globals.cameraPositionFrame.xyz);
+
+    PathState path;
+    float angularFootprint = 2.0 * tanHalf / float(globals.extentCounts.y);
+    path.originCone = vec4(nearPoint, angularFootprint * nearPlane);
+    path.directionSpread = vec4(direction, angularFootprint);
+    path.throughput = vec4(1.0);
+    path.bsdfMedium = vec4(0.0, 1.0, uintBitsToFloat(globals.sceneIds.x), 0.0);
+    path.virtualRow0 = vec4(1.0, 0.0, 0.0, 0.0);
+    path.virtualRow1 = vec4(0.0, 1.0, 0.0, 0.0);
+    path.virtualRow2 = vec4(0.0, 0.0, 1.0, 0.0);
+    uint flags = 0u;
+    vec3 camera = globals.cameraPositionFrame.xyz;
+    if (all(greaterThan(camera, vec3(7.0, 0.125, 7.0))) &&
+        all(lessThan(camera, vec3(9.0, 2.125, 9.0)))) {
+        flags |= PATH_INSIDE_GLASS;
+    }
+    path.ids = uvec4(index, 0u, 0u, flags);
+    path.optical = uvec4(DOMAIN_PENDING, 2166136261u, 0u, 0u);
+    pathsA[index] = path;
+    payloadIndex = index;
+    traceRayEXT(sceneTlas, gl_RayFlagsOpaqueEXT, 0xffu, 0u, 0u, 0u,
+                nearPoint, 1.0e-4, direction, 1.0e4, 0);
+}

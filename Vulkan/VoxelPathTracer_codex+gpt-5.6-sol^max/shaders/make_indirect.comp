@@ -1,0 +1,14 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    uint outputQueue = pushData.u0.x;
+    uint pathCount = counters.queueCount[outputQueue];
+    uint shadows = counters.shadowCount;
+    indirectCommands[0] = uvec4(pathCount, 1u, 1u, 0u);
+    indirectCommands[1] = uvec4((pathCount + 63u) / 64u, 1u, 1u, 0u);
+    indirectCommands[2] = uvec4(shadows, 1u, 1u, 0u);
+    indirectCommands[3] = uvec4((shadows + 63u) / 64u, 1u, 1u, 0u);
+}

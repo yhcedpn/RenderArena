@@ -1,0 +1,81 @@
+#version 460
+#include "restir.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+ivec2 neighborOffset(uint pixel, uint frame, uint neighbor) {
+    uint h = pcgHash(pixel ^ (frame * 0x9e3779b9u) ^ (neighbor * 0x85ebca6bu));
+    int x = int(h & 15u) - 7;
+    int y = int((h >> 4u) & 15u) - 7;
+    if (x == 0 && y == 0) x = int(neighbor) + 1;
+    return clamp(ivec2(x, y), ivec2(-8), ivec2(8));
+}
+
+void main() {
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= pixelCount()) return;
+    RestirSurface targetSurface = surfaceFromShading(shadingPoints[pixel]);
+    if (!targetSurface.valid) {
+        reservoirSpatial[pixel] = emptyReservoir();
+        return;
+    }
+    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
+    ivec2 center = ivec2(int(pixel % globals.extentCounts.x),
+                         int(pixel / globals.extentCounts.x));
+    uint sourceIndices[5];
+    bool sourceValid[5];
+    sourceIndices[0] = pixel;
+    sourceValid[0] = true;
+    for (uint i = 0u; i < 4u; ++i) {
+        ivec2 coordinate = center + neighborOffset(pixel, frame, i);
+        sourceValid[i + 1u] = all(greaterThanEqual(coordinate, ivec2(0))) &&
+                              all(lessThan(coordinate, ivec2(globals.extentCounts.xy)));
+        sourceIndices[i + 1u] = sourceValid[i + 1u]
+                                    ? uint(coordinate.y) * globals.extentCounts.x + uint(coordinate.x)
+                                    : pixel;
+        if (sourceValid[i + 1u]) {
+            RestirSurface neighbor = surfaceFromShading(shadingPoints[sourceIndices[i + 1u]]);
+            sourceValid[i + 1u] = restirCompatible(targetSurface, neighbor);
+        }
+    }
+
+    float sumWeights = 0.0;
+    float selectedTarget = 0.0;
+    float totalMultiplicity = 0.0;
+    uvec4 selected = uvec4(0u);
+    for (uint i = 0u; i < 5u; ++i) {
+        if (!sourceValid[i]) continue;
+        Reservoir source = reservoirTemporal[sourceIndices[i]];
+        if (source.selected.w == 0u || source.weights.z <= 0.0) continue;
+        float denominator = 0.0;
+        for (uint j = 0u; j < 5u; ++j) {
+            if (!sourceValid[j]) continue;
+            Reservoir supportReservoir = reservoirTemporal[sourceIndices[j]];
+            float z = reservoirNormalizer(supportReservoir);
+            if (supportReservoir.selected.w == 0u || z <= 0.0) continue;
+            RestirSurface support = surfaceFromShading(shadingPoints[sourceIndices[j]]);
+            float targetAtSupport = evaluateLightSample(support, source.selected).target;
+            denominator += supportReservoir.weights.z * targetAtSupport / z;
+        }
+        float target = evaluateLightSample(targetSurface, source.selected).target;
+        float candidateWeight = denominator > 0.0 ? target * source.weights.z / denominator : 0.0;
+        if (candidateWeight > 0.0 && !isnan(candidateWeight)) {
+            sumWeights += candidateWeight;
+            if (randomFloat(pixel, frame, 144u + i, 0u) < candidateWeight / sumWeights) {
+                selected = source.selected;
+                selectedTarget = target;
+            }
+        }
+        totalMultiplicity += source.weights.z;
+    }
+    Reservoir resultReservoir = emptyReservoir();
+    if (selected.w != 0u && selectedTarget > 0.0 && sumWeights > 0.0) {
+        float cappedMultiplicity = min(totalMultiplicity, 32.0);
+        float recordedWeightSum = sumWeights;
+        if (totalMultiplicity > 32.0) recordedWeightSum *= 32.0 / totalMultiplicity;
+        resultReservoir.selected = selected;
+        resultReservoir.weights = vec4(recordedWeightSum, selectedTarget, cappedMultiplicity,
+                                       sumWeights / selectedTarget);
+    }
+    reservoirSpatial[pixel] = resultReservoir;
+}
