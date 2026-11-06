@@ -1,45 +1,42 @@
 #version 460
-#include "restir.glsl"
+#include "restir_common.glsl"
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-void main() {
+void main()
+{
+    FrameData frame = frameData();
     uint pixel = gl_GlobalInvocationID.x;
-    if (pixel >= pixelCount()) return;
-    RestirSurface surface = surfaceFromShading(shadingPoints[pixel]);
-    Reservoir resultReservoir = emptyReservoir();
-    if (!surface.valid) {
-        reservoirInitial[pixel] = resultReservoir;
+    if (pixel >= frame.counts.x) {
         return;
     }
-    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
-    float weightSum = 0.0;
-    float selectedTarget = 0.0;
-    uvec4 selected = uvec4(0u);
-    for (uint candidate = 0u; candidate < 4u; ++candidate) {
-        float lightXi = randomFloat(pixel, frame, 48u + candidate * 3u, 0u);
-        float r1 = randomFloat(pixel, frame, 49u + candidate * 3u, 0u);
-        float r2 = randomFloat(pixel, frame, 50u + candidate * 3u, 0u);
-        uint lightIndex = restirSampleLight(lightXi);
-        float su = sqrt(r1);
-        uvec4 candidateSample = uvec4(lightIndex, floatBitsToUint(su * (1.0 - r2)),
-                                      floatBitsToUint(su * r2), 1u);
-        LightEvaluation evaluation = evaluateLightSample(surface, candidateSample);
-        float weight = evaluation.proposalArea > 0.0
-                           ? evaluation.target / evaluation.proposalArea
-                           : 0.0;
-        if (!isnan(weight) && weight > 0.0) {
-            weightSum += weight;
-            if (randomFloat(pixel, frame, 96u + candidate, 0u) < weight / weightSum) {
-                selected = candidateSample;
-                selectedTarget = evaluation.target;
+    HitRecord hit = hits.values[pixel];
+    Reservoir reservoir = emptyReservoir();
+    if (hit.positionT.w >= 0.0) {
+        uint type = materials.values[hit.ids.x].typeTexture.x;
+        if (type == MATERIAL_DIFFUSE || type == MATERIAL_ROUGH_METAL) {
+            for (uint candidate = 0u; candidate < 4u; ++candidate) {
+                uint dimension = 11u + candidate * 4u;
+                uint lightIndex = selectLight(randomDimension(pixel, frame.extentFrameFlags.z, dimension, 0u),
+                                               frame.counts.z);
+                vec2 sampleData = vec2(randomDimension(pixel, frame.extentFrameFlags.z, dimension + 1u, 0u),
+                                   randomDimension(pixel, frame.extentFrameFlags.z, dimension + 2u, 0u));
+                float target;
+                float proposal;
+                vec3 direction;
+                float distanceToLight;
+                evaluateDirectAtHit(hit, pathsA.values[pixel], lightIndex, sampleData, target, proposal,
+                                    direction, distanceToLight);
+                float weight = proposal > 0.0 ? target / proposal : 0.0;
+                reservoirUpdate(reservoir, lightIndex, sampleData, target, proposal, weight,
+                                randomDimension(pixel, frame.extentFrameFlags.z, dimension + 3u, 0u));
+            }
+            reservoir.weights.y = 4.0;
+            if (reservoir.weights.x > 0.0 && reservoir.sampleData.z > 0.0) {
+                reservoir.weights.z = reservoir.weights.x / (4.0 * reservoir.sampleData.z);
+                reservoir.weights.w = 1.0;
             }
         }
     }
-    if (selected.w != 0u && selectedTarget > 0.0 && weightSum > 0.0) {
-        resultReservoir.selected = selected;
-        resultReservoir.weights = vec4(weightSum, selectedTarget, 4.0,
-                                       weightSum / (4.0 * selectedTarget));
-    }
-    reservoirInitial[pixel] = resultReservoir;
+    reservoirInitial.values[pixel] = reservoir;
 }

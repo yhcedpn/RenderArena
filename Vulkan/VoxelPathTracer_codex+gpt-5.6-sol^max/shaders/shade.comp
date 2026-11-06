@@ -1,495 +1,267 @@
 #version 460
-#include "common.glsl"
+#include "shading_common.glsl"
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-const uint TYPE_DIFFUSE = 0u;
-const uint TYPE_ROUGH_METAL = 1u;
-const uint TYPE_MIRROR = 2u;
-const uint TYPE_DIELECTRIC = 3u;
-const uint TYPE_EMISSIVE = 4u;
-
-float powerHeuristic(float a, float b) {
-    float aa = a * a;
-    float bb = b * b;
-    return aa / max(aa + bb, 1.0e-20);
-}
-
-float dielectricFresnel(float cosThetaI, float etaI, float etaT) {
-    float sin2ThetaT = (etaI / etaT) * (etaI / etaT) * max(0.0, 1.0 - cosThetaI * cosThetaI);
-    if (sin2ThetaT >= 1.0) return 1.0;
-    float cosThetaT = sqrt(max(0.0, 1.0 - sin2ThetaT));
-    float rs = (etaI * cosThetaI - etaT * cosThetaT) /
-               (etaI * cosThetaI + etaT * cosThetaT);
-    float rp = (etaT * cosThetaI - etaI * cosThetaT) /
-               (etaT * cosThetaI + etaI * cosThetaT);
-    return 0.5 * (rs * rs + rp * rp);
-}
-
-void makeBasis(vec3 n, out vec3 tangent, out vec3 bitangent) {
-    vec3 helper = abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
-    tangent = safeNormalize(cross(helper, n));
-    bitangent = cross(n, tangent);
-}
-
-vec3 localToWorld(vec3 local, vec3 n) {
-    vec3 tangent;
-    vec3 bitangent;
-    makeBasis(n, tangent, bitangent);
-    return safeNormalize(tangent * local.x + bitangent * local.y + n * local.z);
-}
-
-float ggxLambda(float noV, float alpha) {
-    float noV2 = max(noV * noV, 1.0e-8);
-    float tan2 = max(0.0, 1.0 - noV2) / noV2;
-    return 0.5 * (sqrt(1.0 + alpha * alpha * tan2) - 1.0);
-}
-
-float ggxD(float noH, float alpha) {
-    float a2 = alpha * alpha;
-    float denominator = noH * noH * (a2 - 1.0) + 1.0;
-    return a2 / max(PI * denominator * denominator, 1.0e-20);
-}
-
-vec3 fresnelSchlick(float voH, vec3 f0) {
-    float factor = pow(clamp(1.0 - voH, 0.0, 1.0), 5.0);
-    return f0 + (vec3(1.0) - f0) * factor;
-}
-
-vec3 evaluateMetal(vec3 n, vec3 wo, vec3 wi, vec3 f0, float roughness,
-                   out float pdf) {
-    float noV = max(dot(n, wo), 0.0);
-    float noL = max(dot(n, wi), 0.0);
-    if (noV <= 0.0 || noL <= 0.0) {
-        pdf = 0.0;
-        return vec3(0.0);
-    }
-    vec3 h = safeNormalize(wo + wi);
-    float noH = max(dot(n, h), 0.0);
-    float voH = max(dot(wo, h), 0.0);
-    float alpha = max(roughness * roughness, 1.0e-3);
-    float d = ggxD(noH, alpha);
-    float g1v = 1.0 / (1.0 + ggxLambda(noV, alpha));
-    float g2 = 1.0 / (1.0 + ggxLambda(noV, alpha) + ggxLambda(noL, alpha));
-    vec3 f = fresnelSchlick(voH, f0);
-    pdf = d * g1v * voH / max(noV * 4.0 * voH, 1.0e-20);
-    return f * (d * g2 / max(4.0 * noV * noL, 1.0e-20));
-}
-
-vec3 sampleGgxVndf(vec3 n, vec3 wo, float alpha, vec2 randomValue, out vec3 halfVector) {
-    vec3 tangent;
-    vec3 bitangent;
-    makeBasis(n, tangent, bitangent);
-    vec3 viewLocal = vec3(dot(wo, tangent), dot(wo, bitangent), dot(wo, n));
-    vec3 stretched = safeNormalize(vec3(alpha * viewLocal.xy, viewLocal.z));
-    float lensq = dot(stretched.xy, stretched.xy);
-    vec3 t1 = lensq > 0.0 ? vec3(-stretched.y, stretched.x, 0.0) * inversesqrt(lensq)
-                          : vec3(1.0, 0.0, 0.0);
-    vec3 t2 = cross(stretched, t1);
-    float radius = sqrt(randomValue.x);
-    float phi = 2.0 * PI * randomValue.y;
-    float p1 = radius * cos(phi);
-    float p2 = radius * sin(phi);
-    float s = 0.5 * (1.0 + stretched.z);
-    p2 = mix(sqrt(max(0.0, 1.0 - p1 * p1)), p2, s);
-    vec3 nh = p1 * t1 + p2 * t2 +
-              sqrt(max(0.0, 1.0 - p1 * p1 - p2 * p2)) * stretched;
-    vec3 hLocal = safeNormalize(vec3(alpha * nh.xy, max(0.0, nh.z)));
-    halfVector = safeNormalize(tangent * hLocal.x + bitangent * hLocal.y + n * hLocal.z);
-    return reflect(-wo, halfVector);
-}
-
-vec3 sampledAlbedo(uint materialIndex, vec2 uv, float lod) {
-    return textureLod(baseColorTextures, vec3(uv, float(materialIndex)), lod).rgb;
-}
-
-float sampledRoughness(uint materialIndex, vec2 uv, float lod) {
-    return textureLod(roughnessTextures, vec3(uv, float(materialIndex)), lod).r;
-}
-
-float rayLod(PathState path, HitRecord hit) {
-    float footprint = path.originCone.w + hit.positionT.w * path.directionSpread.w;
-    return clamp(log2(max(footprint * float(globals.sceneIds.z), 1.0)), 0.0,
-                 float(globals.sceneIds.y - 1u));
-}
-
-uint terminalDomain(PathState path, uint terminalType) {
-    if ((path.ids.w & PATH_GLASS_BRANCH) != 0u) {
-        return (path.ids.w & PATH_TRANSMITTED) != 0u ? DOMAIN_GLASS_TRANSMISSION
-                                                     : DOMAIN_GLASS_REFLECTION;
-    }
-    if (path.optical.z > 0u) {
-        return terminalType == TYPE_ROUGH_METAL ? DOMAIN_REFLECT_SPECULAR
-                                                : DOMAIN_REFLECT_DIFFUSE;
-    }
-    return terminalType == TYPE_ROUGH_METAL ? DOMAIN_SPECULAR : DOMAIN_DIFFUSE;
-}
-
-Guide makeGuide(PathState path, HitRecord hit, vec3 normal, vec3 albedo,
-                float roughness, uint domain, uint terminalType) {
-    Guide guide;
-    vec3 virtualPosition = transformPoint(path, hit.positionT.xyz);
-    vec3 virtualNormal = transformDirection(path, normal);
-    guide.positionDepth = vec4(hit.positionT.xyz, hit.positionT.w);
-    guide.normalRoughness = vec4(normal, roughness);
-    guide.virtualPositionDepth = vec4(virtualPosition,
-                                      length(virtualPosition - globals.cameraPositionFrame.xyz));
-    guide.virtualNormalDistance = vec4(virtualNormal, hit.positionT.w);
-    guide.albedo = vec4(albedo, 0.0);
-    guide.ids = uvec4(hit.ids.y, hit.ids.x, path.optical.y,
-                      packedGuideMeta(domain, path.optical.z, terminalType,
-                                      (path.ids.w & PATH_TRANSMITTED) != 0u ? 1u : 0u));
-    return guide;
-}
-
-void storePath(uint queue, uint index, PathState path) {
-    if (queue == 0u)
-        pathsA[index] = path;
-    else
-        pathsB[index] = path;
-}
-
-void appendPath(uint outputQueue, PathState path) {
-    uint slot = atomicAdd(counters.queueCount[outputQueue], 1u);
-    if (slot >= 2u * pixelCount()) {
-        atomicOr(counters.gpuError, 1u);
-        return;
-    }
-    storePath(outputQueue, slot, path);
-}
-
-void appendShadow(vec3 origin, vec3 direction, float distanceToLight,
-                  vec3 contribution, uint outputIndex, uint domain) {
-    uint slot = atomicAdd(counters.shadowCount, 1u);
-    if (slot >= 2u * pixelCount()) {
-        atomicOr(counters.gpuError, 2u);
-        return;
-    }
-    ShadowTask task;
-    task.originTMax = vec4(origin, max(distanceToLight - 2.0e-3, 1.0e-4));
-    task.direction = vec4(direction, 0.0);
-    task.contribution = vec4(contribution, 0.0);
-    task.meta = uvec4(outputIndex, domain, 0u, 0u);
-    shadowTasks[slot] = task;
-}
-
-uint sampleLightIndex(float xi) {
-    uint lo = 0u;
-    uint hi = globals.extentCounts.w;
-    while (lo < hi) {
-        uint mid = (lo + hi) >> 1u;
-        if (xi <= lights[mid].p1Cdf.w)
-            hi = mid;
-        else
-            lo = mid + 1u;
-    }
-    return min(lo, globals.extentCounts.w - 1u);
-}
-
-vec3 evaluateBsdf(uint type, vec3 n, vec3 wo, vec3 wi, vec3 albedo,
-                  float roughness, out float pdf) {
-    float noL = max(dot(n, wi), 0.0);
-    if (type == TYPE_DIFFUSE) {
-        pdf = noL / PI;
-        return albedo / PI;
-    }
-    return evaluateMetal(n, wo, wi, albedo, roughness, pdf);
-}
-
-void enqueueNee(PathState path, HitRecord hit, vec3 normal, uint materialType,
-                vec3 albedo, float roughness, uint outputIndex, uint domain) {
-    uint dimension = path.optical.w;
-    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
-    float choice = randomFloat(path.ids.x, frame, dimension++, path.ids.y);
-    float ru = randomFloat(path.ids.x, frame, dimension++, path.ids.y);
-    float rv = randomFloat(path.ids.x, frame, dimension++, path.ids.y);
-    uint lightIndex = sampleLightIndex(choice);
-    LightData light = lights[lightIndex];
-    float su = sqrt(ru);
-    vec3 bary = vec3(1.0 - su, su * (1.0 - rv), su * rv);
-    vec3 lightPosition = light.p0Area.xyz * bary.x + light.p1Cdf.xyz * bary.y +
-                         light.p2SelectionPdf.xyz * bary.z;
-    vec3 toLight = lightPosition - hit.positionT.xyz;
-    float distanceSquared = dot(toLight, toLight);
-    float distanceToLight = sqrt(distanceSquared);
-    vec3 wi = toLight / max(distanceToLight, 1.0e-10);
-    float receiverCosine = max(dot(normal, wi), 0.0);
-    float lightCosine = max(dot(light.normalTriangle.xyz, -wi), 0.0);
-    if (receiverCosine <= 0.0 || lightCosine <= 0.0) return;
-    uint lightTriangle = floatBitsToUint(light.normalTriangle.w);
-    uint lightMaterial = triangles[lightTriangle].indicesMaterial.w;
-    vec3 emission = materials[lightMaterial].emission.rgb;
-    float areaProposal = light.p2SelectionPdf.w / light.p0Area.w;
-    float directionProposal = areaProposal * distanceSquared / lightCosine;
-    float bsdfPdf;
-    vec3 bsdf = evaluateBsdf(materialType, normal, -path.directionSpread.xyz, wi,
-                             albedo, roughness, bsdfPdf);
-    float mis = powerHeuristic(directionProposal, bsdfPdf);
-    vec3 contribution = path.throughput.rgb * emission * bsdf * receiverCosine *
-                        lightCosine / max(distanceSquared * areaProposal, 1.0e-20) * mis;
-    appendShadow(offsetRay(hit.positionT.xyz, normal, wi), wi, distanceToLight,
-                 contribution, outputIndex, domain);
-}
-
-float emitterDirectionPdf(uint triangleIndex, vec3 rayDirection, float distanceSquared) {
-    for (uint i = 0u; i < globals.extentCounts.w; ++i) {
-        LightData light = lights[i];
-        if (floatBitsToUint(light.normalTriangle.w) != triangleIndex) continue;
-        float lightCosine = max(dot(light.normalTriangle.xyz, -rayDirection), 0.0);
-        if (lightCosine <= 0.0) return 0.0;
-        return (light.p2SelectionPdf.w / light.p0Area.w) * distanceSquared / lightCosine;
-    }
-    return 0.0;
-}
-
-void main() {
+void main()
+{
     uint index = gl_GlobalInvocationID.x;
-    uint inputQueue = pushData.u0.x;
-    uint outputQueue = pushData.u0.y;
-    bool allowScatter = pushData.u0.z != 0u;
-    uint count = counters.queueCount[inputQueue];
-    if (index >= count) return;
+    if (index >= counters.words[0]) {
+        return;
+    }
+    FrameData frame = frameData();
+    bool currentInA = (pc.passIndex & 1u) == 0u;
+    bool nextInA = !currentInA;
+    PathState path = currentInA ? pathsA.values[index] : pathsB.values[index];
+    HitRecord hit = hits.values[index];
 
-    PathState path = inputQueue == 0u ? pathsA[index] : pathsB[index];
-    HitRecord hit = hits[index];
-    uint outputIndex = branchIndex(path.ids.x, path.ids.y);
-    BranchOutput branchResult = branchOutputs[outputIndex];
-
-    if ((path.ids.w & PATH_INSIDE_GLASS) != 0u && hit.normalHit.w != 0.0) {
-        uint mediumMaterial = floatBitsToUint(path.bsdfMedium.z);
-        path.throughput.rgb *= exp(-materials[mediumMaterial].absorption.rgb * hit.positionT.w);
+    if ((path.meta.w & PATH_INSIDE_GLASS) != 0u && hit.positionT.w > 0.0) {
+        vec3 absorption = materials.values[hit.ids.x].absorptionIor.xyz;
+        path.throughputEta.xyz *= exp(-absorption * hit.positionT.w);
     }
 
-    if (hit.normalHit.w == 0.0) {
-        branchOutputs[outputIndex] = branchResult;
+    if (hit.positionT.w < 0.0) {
+        if (path.meta.z == 0u && path.optical.z == INVALID_DOMAIN) {
+            analyticValues.values[path.meta.x] = vec4(0.0, 0.0, 0.0, 1.0);
+        } else {
+            writeBranchResult(path);
+        }
         return;
     }
 
-    uint materialIndex = hit.ids.x;
-    MaterialData material = materials[materialIndex];
-    uint materialType = floatBitsToUint(material.params.x);
-    vec3 geometricNormal = hit.normalHit.xyz;
-    bool frontFace = hit.ids.w != 0u;
-    vec3 shadingNormal = frontFace ? geometricNormal : -geometricNormal;
-    float lod = rayLod(path, hit);
-    vec3 albedo = sampledAlbedo(materialIndex, hit.uvCone.xy, lod);
-    float roughness = sampledRoughness(materialIndex, hit.uvCone.xy, lod);
+    Material material = materials.values[hit.ids.x];
+    uint type = material.typeTexture.x;
+    vec3 outwardNormal = normalize(hit.normalFront.xyz);
+    vec3 normal = hit.normalFront.w > 0.5 ? outwardNormal : -outwardNormal;
+    vec3 view = normalize(-path.directionCone.xyz);
+    float coneWidth = path.directionCone.w * max(hit.positionT.w, 0.0);
+    vec3 baseColor = sampleBaseColor(hit.ids.x, hit.uvCone.xy, coneWidth);
+    float roughness = sampleRoughness(hit.ids.x, hit.uvCone.xy, coneWidth);
 
-    if (materialType == TYPE_EMISSIVE) {
-        if (frontFace) {
-            vec3 contribution = path.throughput.rgb * material.emission.rgb;
-            if (path.ids.z == 0u && path.optical.z == 0u) {
-                branchResult.analyticEmission.rgb += contribution;
-            } else if ((path.ids.w & PATH_SUPPRESS_NEXT_EMITTER) == 0u) {
-                float mis = 1.0;
-                if ((path.ids.w & PATH_LAST_DELTA) == 0u) {
-                    float lightPdf = emitterDirectionPdf(hit.ids.z, path.directionSpread.xyz,
-                                                         hit.positionT.w * hit.positionT.w);
-                    mis = powerHeuristic(path.bsdfMedium.x, lightPdf);
+    if (type == MATERIAL_EMISSIVE) {
+        vec3 emitted = hit.normalFront.w > 0.5 ? material.emissionRoughness.xyz : vec3(0.0);
+        float weight = 1.0;
+        if ((path.meta.w & PATH_LAST_RESTIR) != 0u && (path.meta.w & PATH_LAST_DELTA) == 0u) {
+            weight = 0.0;
+        } else if ((path.meta.w & PATH_LAST_DELTA) == 0u && path.radiancePdf.w > 0.0) {
+            weight = powerHeuristic(path.radiancePdf.w, emitterDirectionPdf(hit, path));
+        }
+        path.radiancePdf.xyz += path.throughputEta.xyz * emitted * weight;
+        if (path.meta.z == 0u && path.optical.z == INVALID_DOMAIN) {
+            analyticValues.values[path.meta.x] = vec4(path.radiancePdf.xyz, 1.0);
+        } else {
+            if ((path.meta.w & PATH_TERMINAL_VALID) == 0u) {
+                establishTerminal(path, hit, normal, vec3(1.0), 0.0, false);
+            }
+            writeBranchResult(path);
+        }
+        return;
+    }
+
+    if (type == MATERIAL_MIRROR) {
+        if (path.optical.z == INVALID_DOMAIN) {
+            path.optical.z = DOMAIN_REFLECTION;
+        }
+        if ((path.meta.w & PATH_TRANSMITTED) == 0u) {
+            appendReflectionTransform(path, outwardNormal, hit.positionT.xyz);
+        }
+        path.optical.x = hashBits(path.optical.x ^ hit.ids.y ^ (path.optical.y * 0x9e3779b9u));
+        path.optical.y += 1u;
+        path.throughputEta.xyz *= baseColor;
+        path.directionCone.xyz = reflect(path.directionCone.xyz, normal);
+        path.directionCone.w = coneWidth + 1.0e-5;
+        path.originTmin = vec4(hit.positionT.xyz + path.directionCone.xyz * RAY_EPSILON, RAY_EPSILON);
+        path.meta.z += 1u;
+        path.meta.w |= PATH_LAST_DELTA;
+        path.meta.w &= ~PATH_LAST_RESTIR;
+        path.radiancePdf.w = 0.0;
+        if (!russianRoulette(path, path.meta.y)) {
+            writeBranchResult(path);
+            return;
+        }
+        appendPath(path, nextInA);
+        return;
+    }
+
+    if (type == MATERIAL_DIELECTRIC) {
+        bool inside = (path.meta.w & PATH_INSIDE_GLASS) != 0u;
+        float etaI = inside ? material.absorptionIor.w : 1.0;
+        float etaT = inside ? 1.0 : material.absorptionIor.w;
+        float eta = etaI / etaT;
+        float cosineI = max(dot(-path.directionCone.xyz, normal), 0.0);
+        float sineT2 = eta * eta * max(0.0, 1.0 - cosineI * cosineI);
+        bool totalInternalReflection = sineT2 >= 1.0;
+        float fresnel = totalInternalReflection ? 1.0 : dielectricFresnel(cosineI, etaI, etaT);
+        uint opticalHash = hashBits(path.optical.x ^ hit.ids.y ^
+                                    ((inside ? 2u : 1u) * 0x85ebca6bu));
+
+        if ((path.meta.w & PATH_GLASS_SPLIT) == 0u) {
+            writeCommonPrefix(path);
+            PathState reflected = path;
+            reflected.radiancePdf.xyz = vec3(0.0);
+            reflected.meta.y = 0u;
+            reflected.meta.z += 1u;
+            reflected.meta.w |= PATH_GLASS_SPLIT | PATH_LAST_DELTA;
+            reflected.meta.w &= ~PATH_LAST_RESTIR;
+            reflected.optical.x = opticalHash;
+            reflected.optical.y += 1u;
+            reflected.optical.z = DOMAIN_GLASS_REFLECTION;
+            reflected.throughputEta.xyz *= fresnel;
+            reflected.directionCone.xyz = reflect(path.directionCone.xyz, normal);
+            reflected.originTmin = vec4(hit.positionT.xyz + reflected.directionCone.xyz * RAY_EPSILON,
+                                        RAY_EPSILON);
+            if ((reflected.meta.w & PATH_TRANSMITTED) == 0u) {
+                appendReflectionTransform(reflected, outwardNormal, hit.positionT.xyz);
+            }
+            if (russianRoulette(reflected, 0u)) {
+                appendPath(reflected, nextInA);
+            } else {
+                writeBranchResult(reflected);
+            }
+
+            if (!totalInternalReflection) {
+                PathState transmitted = path;
+                transmitted.radiancePdf.xyz = vec3(0.0);
+                transmitted.meta.y = 1u;
+                transmitted.meta.z += 1u;
+                transmitted.meta.w |= PATH_GLASS_SPLIT | PATH_LAST_DELTA | PATH_TRANSMITTED;
+                transmitted.meta.w &= ~PATH_LAST_RESTIR;
+                if (inside) {
+                    transmitted.meta.w &= ~PATH_INSIDE_GLASS;
+                } else {
+                    transmitted.meta.w |= PATH_INSIDE_GLASS;
                 }
-                if (path.optical.x == DOMAIN_PENDING) {
-                    path.optical.x = terminalDomain(path, materialType);
-                    branchResult.guide = makeGuide(path, hit, geometricNormal, vec3(1.0), 0.0,
-                                                  path.optical.x, materialType);
-                    branchResult.meta = uvec4(path.optical.x, 1u, 0u, 0u);
+                transmitted.optical.x = opticalHash;
+                transmitted.optical.y += 1u;
+                transmitted.optical.z = DOMAIN_TRANSMISSION;
+                transmitted.throughputEta.xyz *= (1.0 - fresnel) * eta * eta;
+                transmitted.throughputEta.w = etaT;
+                transmitted.directionCone.xyz = refract(path.directionCone.xyz, normal, eta);
+                transmitted.originTmin = vec4(hit.positionT.xyz + transmitted.directionCone.xyz * RAY_EPSILON,
+                                              RAY_EPSILON);
+                if (russianRoulette(transmitted, 1u)) {
+                    appendPath(transmitted, nextInA);
+                } else {
+                    writeBranchResult(transmitted);
                 }
-                branchResult.radiance.rgb += contribution * mis;
+            }
+            return;
+        }
+
+        bool chooseReflection = totalInternalReflection ||
+                                randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                                73u + path.meta.z * 5u, path.meta.y) < fresnel;
+        path.meta.z += 1u;
+        path.meta.w |= PATH_LAST_DELTA;
+        path.meta.w &= ~PATH_LAST_RESTIR;
+        path.optical.x = opticalHash;
+        path.optical.y += 1u;
+        if (chooseReflection) {
+            path.directionCone.xyz = reflect(path.directionCone.xyz, normal);
+            if ((path.meta.w & PATH_TRANSMITTED) == 0u) {
+                appendReflectionTransform(path, outwardNormal, hit.positionT.xyz);
+            }
+        } else {
+            path.directionCone.xyz = refract(path.directionCone.xyz, normal, eta);
+            path.throughputEta.xyz *= eta * eta;
+            path.throughputEta.w = etaT;
+            path.meta.w |= PATH_TRANSMITTED;
+            path.optical.z = DOMAIN_TRANSMISSION;
+            if (inside) {
+                path.meta.w &= ~PATH_INSIDE_GLASS;
+            } else {
+                path.meta.w |= PATH_INSIDE_GLASS;
             }
         }
-        branchOutputs[outputIndex] = branchResult;
-        return;
-    }
-
-    if (materialType != TYPE_MIRROR && materialType != TYPE_DIELECTRIC &&
-        path.optical.x == DOMAIN_PENDING) {
-        path.optical.x = terminalDomain(path, materialType);
-        branchResult.guide = makeGuide(path, hit, geometricNormal, albedo, roughness,
-                                      path.optical.x, materialType);
-        branchResult.meta = uvec4(path.optical.x, 1u, 0u, 0u);
-    }
-
-    if (path.ids.z == 0u && path.optical.z == 0u &&
-        (materialType == TYPE_DIFFUSE || materialType == TYPE_ROUGH_METAL)) {
-        ShadingPoint point;
-        point.position = vec4(hit.positionT.xyz, hit.positionT.w);
-        point.normalRoughness = vec4(shadingNormal, roughness);
-        point.albedo = vec4(albedo, hit.uvCone.x);
-        point.ids = uvec4(1u, materialIndex, hit.ids.y, path.optical.x);
-        shadingPoints[path.ids.x] = point;
-    }
-
-    if (!allowScatter) {
-        branchOutputs[outputIndex] = branchResult;
-        return;
-    }
-
-    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
-    uint dimension = path.optical.w;
-    vec3 outgoing = -path.directionSpread.xyz;
-
-    if (materialType == TYPE_MIRROR) {
-        vec3 reflected = reflect(path.directionSpread.xyz, shadingNormal);
-        path.throughput.rgb *= albedo;
-        appendReflectionTransform(path, hit.positionT.xyz, shadingNormal);
-        path.optical.y = pcgHash(path.optical.y ^ hit.ids.y ^ 0x4d495252u);
-        path.optical.z += 1u;
-        path.ids.w |= PATH_LAST_DELTA;
-        path.ids.w &= ~PATH_SUPPRESS_NEXT_EMITTER;
-        path.ids.z += 1u;
-        path.originCone = vec4(offsetRay(hit.positionT.xyz, shadingNormal, reflected),
-                               path.originCone.w + hit.positionT.w * path.directionSpread.w);
-        path.directionSpread = vec4(reflected, path.directionSpread.w);
-        path.optical.w = dimension;
-        appendPath(outputQueue, path);
-        branchOutputs[outputIndex] = branchResult;
-        return;
-    }
-
-    if (materialType == TYPE_DIELECTRIC) {
-        bool inside = (path.ids.w & PATH_INSIDE_GLASS) != 0u;
-        vec3 interfaceNormal = inside ? -geometricNormal : geometricNormal;
-        if (dot(path.directionSpread.xyz, interfaceNormal) > 0.0) interfaceNormal = -interfaceNormal;
-        float etaI = inside ? material.params.w : 1.0;
-        float etaT = inside ? 1.0 : material.params.w;
-        float eta = etaI / etaT;
-        float cosI = clamp(-dot(path.directionSpread.xyz, interfaceNormal), 0.0, 1.0);
-        float sin2T = eta * eta * max(0.0, 1.0 - cosI * cosI);
-        float fresnel = dielectricFresnel(cosI, etaI, etaT);
-        vec3 reflected = reflect(path.directionSpread.xyz, interfaceNormal);
-        bool totalInternalReflection = sin2T >= 1.0;
-
-        if ((path.ids.w & PATH_SPLIT_DONE) == 0u && !totalInternalReflection) {
-            PathState reflectionPath = path;
-            reflectionPath.throughput.rgb *= fresnel;
-            reflectionPath.ids.w |= PATH_SPLIT_DONE | PATH_GLASS_BRANCH | PATH_LAST_DELTA;
-            reflectionPath.ids.w &= ~PATH_SUPPRESS_NEXT_EMITTER;
-            reflectionPath.ids.z += 1u;
-            reflectionPath.optical.y = pcgHash(path.optical.y ^ hit.ids.y ^ 0x5245464cu);
-            reflectionPath.optical.z += 1u;
-            appendReflectionTransform(reflectionPath, hit.positionT.xyz, interfaceNormal);
-            reflectionPath.originCone =
-                vec4(offsetRay(hit.positionT.xyz, interfaceNormal, reflected),
-                     path.originCone.w + hit.positionT.w * path.directionSpread.w);
-            reflectionPath.directionSpread = vec4(reflected, path.directionSpread.w);
-            reflectionPath.optical.w = dimension;
-            appendPath(outputQueue, reflectionPath);
-
-            float cosT = sqrt(max(0.0, 1.0 - sin2T));
-            vec3 refracted = safeNormalize(eta * path.directionSpread.xyz +
-                                           (eta * cosI - cosT) * interfaceNormal);
-            PathState transmissionPath = path;
-            transmissionPath.ids.y = 1u;
-            transmissionPath.throughput.rgb *= (1.0 - fresnel) * eta * eta;
-            transmissionPath.ids.w |= PATH_SPLIT_DONE | PATH_GLASS_BRANCH |
-                                      PATH_TRANSMITTED | PATH_LAST_DELTA;
-            transmissionPath.ids.w &= ~PATH_SUPPRESS_NEXT_EMITTER;
-            transmissionPath.ids.w ^= PATH_INSIDE_GLASS;
-            transmissionPath.ids.z += 1u;
-            transmissionPath.optical.y = pcgHash(path.optical.y ^ hit.ids.y ^ 0x5452414eu);
-            transmissionPath.optical.z += 1u;
-            transmissionPath.originCone =
-                vec4(offsetRay(hit.positionT.xyz, interfaceNormal, refracted),
-                     path.originCone.w + hit.positionT.w * path.directionSpread.w);
-            transmissionPath.directionSpread = vec4(refracted, path.directionSpread.w);
-            transmissionPath.optical.w = dimension + 1u;
-            appendPath(outputQueue, transmissionPath);
-            branchOutputs[outputIndex] = branchResult;
+        path.originTmin = vec4(hit.positionT.xyz + path.directionCone.xyz * RAY_EPSILON, RAY_EPSILON);
+        path.radiancePdf.w = 0.0;
+        if (!russianRoulette(path, path.meta.y)) {
+            writeBranchResult(path);
             return;
         }
-
-        bool chooseReflection = totalInternalReflection;
-        if (!totalInternalReflection) {
-            chooseReflection = randomFloat(path.ids.x, frame, dimension++, path.ids.y) < fresnel;
-        }
-        vec3 nextDirection;
-        if (chooseReflection) {
-            nextDirection = reflected;
-            appendReflectionTransform(path, hit.positionT.xyz, interfaceNormal);
-            path.optical.y = pcgHash(path.optical.y ^ hit.ids.y ^ 0x5245464cu);
-        } else {
-            float cosT = sqrt(max(0.0, 1.0 - sin2T));
-            nextDirection = safeNormalize(eta * path.directionSpread.xyz +
-                                          (eta * cosI - cosT) * interfaceNormal);
-            path.throughput.rgb *= eta * eta;
-            path.ids.w ^= PATH_INSIDE_GLASS;
-            path.ids.w |= PATH_TRANSMITTED;
-            path.optical.y = pcgHash(path.optical.y ^ hit.ids.y ^ 0x5452414eu);
-        }
-        path.ids.w |= PATH_SPLIT_DONE | PATH_LAST_DELTA;
-        path.ids.w &= ~PATH_SUPPRESS_NEXT_EMITTER;
-        path.ids.z += 1u;
-        path.optical.z += 1u;
-        path.originCone = vec4(offsetRay(hit.positionT.xyz, interfaceNormal, nextDirection),
-                               path.originCone.w + hit.positionT.w * path.directionSpread.w);
-        path.directionSpread = vec4(nextDirection, path.directionSpread.w);
-        path.optical.w = dimension;
-        appendPath(outputQueue, path);
-        branchOutputs[outputIndex] = branchResult;
+        appendPath(path, nextInA);
         return;
     }
 
-    bool primaryRestir = path.ids.z == 0u && path.optical.z == 0u;
+    bool specular = type == MATERIAL_ROUGH_METAL;
+    if (path.optical.z == INVALID_DOMAIN) {
+        path.optical.z = specular ? DOMAIN_OPAQUE_SPECULAR : DOMAIN_OPAQUE_DIFFUSE;
+    }
+    establishTerminal(path, hit, normal, baseColor, specular ? roughness : 1.0, specular);
+    path.meta.w &= ~PATH_PURE_DELTA;
+
+    bool primaryRestir = path.meta.z == 0u &&
+                         (path.optical.z == DOMAIN_OPAQUE_DIFFUSE ||
+                          path.optical.z == DOMAIN_OPAQUE_SPECULAR);
+    vec3 neeContribution = vec3(0.0);
+    vec3 neeDirection = vec3(0.0);
+    float neeDistance = 0.0;
     if (!primaryRestir) {
-        enqueueNee(path, hit, shadingNormal, materialType, albedo, roughness, outputIndex,
-                   path.optical.x);
+        uint dimension = 131u + path.meta.z * 11u;
+        uint lightIndex = selectLight(randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                                      dimension, path.meta.y), frame.counts.z);
+        vec2 sampleData = vec2(randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                           dimension + 1u, path.meta.y),
+                           randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                           dimension + 2u, path.meta.y));
+        neeContribution = makeNeeContribution(path, hit, normal, view, baseColor, roughness,
+                                              lightIndex, sampleData, neeDirection, neeDistance);
     }
 
-    vec3 nextDirection;
+    vec2 xi = vec2(randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                   151u + path.meta.z * 7u, path.meta.y),
+                   randomDimension(path.meta.x, frame.extentFrameFlags.z,
+                                   152u + path.meta.z * 7u, path.meta.y));
+    vec3 outgoing;
     vec3 bsdf;
     float pdf;
-    if (materialType == TYPE_DIFFUSE) {
-        float r1 = randomFloat(path.ids.x, frame, dimension++, path.ids.y);
-        float r2 = randomFloat(path.ids.x, frame, dimension++, path.ids.y);
-        float radius = sqrt(r1);
-        float phi = 2.0 * PI * r2;
-        nextDirection = localToWorld(vec3(radius * cos(phi), radius * sin(phi),
-                                          sqrt(max(0.0, 1.0 - r1))),
-                                     shadingNormal);
-        float noL = max(dot(shadingNormal, nextDirection), 0.0);
-        pdf = noL / PI;
-        bsdf = albedo / PI;
+    if (!specular) {
+        outgoing = makeBasis(normal) * sampleCosineHemisphere(xi);
+        float cosine = max(dot(normal, outgoing), 0.0);
+        pdf = cosine / PI;
+        bsdf = baseColor / PI;
     } else {
-        float alpha = max(roughness * roughness, 1.0e-3);
-        vec3 halfVector;
-        nextDirection = sampleGgxVndf(
-            shadingNormal, outgoing, alpha,
-            vec2(randomFloat(path.ids.x, frame, dimension++, path.ids.y),
-                 randomFloat(path.ids.x, frame, dimension++, path.ids.y)),
-            halfVector);
-        bsdf = evaluateMetal(shadingNormal, outgoing, nextDirection, albedo, roughness, pdf);
+        mat3 basis = makeBasis(normal);
+        vec3 localView = transpose(basis) * view;
+        float alpha = max(roughness * roughness, 0.0004);
+        vec3 halfway = basis * sampleGgxVndf(localView, alpha, xi);
+        outgoing = reflect(-view, halfway);
+        bsdf = evaluateMetal(baseColor, roughness, normal, view, outgoing, pdf);
     }
-    float cosine = max(dot(shadingNormal, nextDirection), 0.0);
-    if (pdf <= 0.0 || cosine <= 0.0 || any(isnan(bsdf))) {
-        branchOutputs[outputIndex] = branchResult;
-        return;
-    }
-    path.throughput.rgb *= bsdf * (cosine / pdf);
-    path.bsdfMedium.x = pdf;
-    path.ids.w &= ~PATH_LAST_DELTA;
-    if (primaryRestir)
-        path.ids.w |= PATH_SUPPRESS_NEXT_EMITTER;
-    else
-        path.ids.w &= ~PATH_SUPPRESS_NEXT_EMITTER;
-    path.ids.z += 1u;
-
-    if (path.ids.z >= 4u) {
-        float survival = clamp(max(path.throughput.r,
-                                   max(path.throughput.g, path.throughput.b)),
-                               0.05, 0.95);
-        if (randomFloat(path.ids.x, frame, dimension++, path.ids.y) >= survival) {
-            branchOutputs[outputIndex] = branchResult;
-            return;
+    float cosine = max(dot(normal, outgoing), 0.0);
+    bool canContinue = pdf > 0.0 && cosine > 0.0 && any(greaterThan(bsdf, vec3(0.0)));
+    if (canContinue) {
+        path.throughputEta.xyz *= bsdf * cosine / pdf;
+        path.directionCone.xyz = normalize(outgoing);
+        path.directionCone.w = coneWidth + (specular ? roughness * 0.25 : 0.35);
+        path.originTmin = vec4(hit.positionT.xyz + normal * RAY_EPSILON, RAY_EPSILON);
+        path.radiancePdf.w = pdf;
+        path.meta.z += 1u;
+        path.meta.w &= ~(PATH_LAST_DELTA | PATH_LAST_RESTIR);
+        if (primaryRestir) {
+            path.meta.w |= PATH_LAST_RESTIR;
         }
-        path.throughput.rgb /= survival;
+        canContinue = russianRoulette(path, path.meta.y);
     }
 
-    float nextCone = path.originCone.w + hit.positionT.w * path.directionSpread.w;
-    path.originCone = vec4(offsetRay(hit.positionT.xyz, shadingNormal, nextDirection), nextCone);
-    path.directionSpread = vec4(nextDirection,
-                                path.directionSpread.w + (materialType == TYPE_ROUGH_METAL
-                                                              ? roughness * roughness * 0.25
-                                                              : 0.0));
-    path.optical.w = dimension;
-    appendPath(outputQueue, path);
-    branchOutputs[outputIndex] = branchResult;
+    uint targetIndex;
+    uint targetType;
+    if (canContinue) {
+        targetIndex = appendPath(path, nextInA);
+        if (targetIndex == 0xffffffffu) {
+            writeBranchResult(path);
+            targetIndex = path.meta.x * 2u + min(path.meta.y, 1u);
+            targetType = 1u;
+        } else {
+            targetType = 0u;
+        }
+    } else {
+        writeBranchResult(path);
+        targetIndex = path.meta.x * 2u + min(path.meta.y, 1u);
+        targetType = 1u;
+    }
+    if (any(greaterThan(neeContribution, vec3(0.0)))) {
+        appendShadowTask(hit.positionT.xyz + normal * RAY_EPSILON, neeDirection, neeDistance,
+                         neeContribution, targetIndex, targetType, nextInA ? 1u : 0u);
+    }
 }

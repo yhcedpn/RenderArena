@@ -1,96 +1,84 @@
 #version 460
 #include "common.glsl"
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-float kernelWeight(int offset) {
-    const float weights[5] = float[5](1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0,
-                                       4.0 / 16.0, 1.0 / 16.0);
-    return weights[offset + 2];
+float kernelWeight(int offset)
+{
+    const float kernel[5] = float[5](1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0,
+                                      4.0 / 16.0, 1.0 / 16.0);
+    return kernel[offset + 2];
 }
 
-FilterPixel readFilter(uint index, uint source) {
-    return source == 0u ? filterPing[index] : filterPong[index];
-}
-
-bool spatialCompatible(Guide a, Guide b, uint domain) {
-    if (a.ids.x == 0u || b.ids.x == 0u || guideDomain(a) != domain || guideDomain(b) != domain)
+bool opticalCompatible(BranchResult center, BranchResult sampleGuide)
+{
+    if ((center.guideIds.w & GUIDE_VALID) == 0u ||
+        (sampleGuide.guideIds.w & GUIDE_VALID) == 0u) {
         return false;
-    return a.ids.x == b.ids.x && a.ids.y == b.ids.y && a.ids.z == b.ids.z &&
-           a.ids.w == b.ids.w && dot(a.normalRoughness.xyz, b.normalRoughness.xyz) > 0.85 &&
-           abs(a.normalRoughness.w - b.normalRoughness.w) < 0.12;
+    }
+    return center.guideIds.xyz == sampleGuide.guideIds.xyz &&
+           dot(center.guideNormal.xyz, sampleGuide.guideNormal.xyz) >= 0.75 &&
+           abs(center.guideNormal.w - sampleGuide.guideNormal.w) <= 0.2;
 }
 
-void main() {
-    uvec2 coordinate = gl_GlobalInvocationID.xy;
-    if (any(greaterThanEqual(coordinate, globals.extentCounts.xy))) return;
-    uint pixel = coordinate.y * globals.extentCounts.x + coordinate.x;
-    uint source = pushData.u0.x;
-    int stepWidth = int(pushData.u0.y);
-    FilterPixel centerPixel = readFilter(pixel, source);
-    FilterPixel filteredResult;
-
-    for (uint domain = 0u; domain < DOMAIN_COUNT; ++domain) {
-        Guide centerGuide = findGuide(guidesCurrent[pixel], domain);
-        vec4 center = centerPixel.valueVariance[domain];
-        if (centerGuide.ids.x == 0u) {
-            filteredResult.valueVariance[domain] = center;
-            continue;
-        }
-        float sigma = sqrt(max(center.w, 0.0)) + 1.0e-3;
-        float centerLuminance = luminance(center.rgb);
-        vec3 valueSum = vec3(0.0);
-        float varianceNumerator = 0.0;
-        float weightSum = 0.0;
-        for (int ky = -2; ky <= 2; ++ky) {
-            for (int kx = -2; kx <= 2; ++kx) {
-                ivec2 neighborCoordinate = ivec2(coordinate) +
-                                           ivec2(kx * stepWidth, ky * stepWidth);
-                if (any(lessThan(neighborCoordinate, ivec2(0))) ||
-                    any(greaterThanEqual(neighborCoordinate,
-                                         ivec2(globals.extentCounts.xy))))
-                    continue;
-                uint neighborPixel = uint(neighborCoordinate.y) * globals.extentCounts.x +
-                                     uint(neighborCoordinate.x);
-                Guide neighborGuide = findGuide(guidesCurrent[neighborPixel], domain);
-                if (!spatialCompatible(centerGuide, neighborGuide, domain)) continue;
-                vec4 neighbor = readFilter(neighborPixel, source).valueVariance[domain];
-                float base = kernelWeight(kx) * kernelWeight(ky);
-                // Position is measured in world units. The scale grows with wavelet
-                // step and projected footprint, rather than with a scene/material ID.
-                float positionScale = 0.08 * float(stepWidth) +
-                                      0.003 * max(centerGuide.positionDepth.w,
-                                                  neighborGuide.positionDepth.w);
-                float positionWeight = exp(-distance(centerGuide.positionDepth.xyz,
-                                                     neighborGuide.positionDepth.xyz) /
-                                           max(positionScale, 1.0e-3));
-                float normalWeight = pow(max(dot(centerGuide.normalRoughness.xyz,
-                                                 neighborGuide.normalRoughness.xyz),
-                                             0.0),
-                                         32.0);
-                float roughnessWeight = exp(-abs(centerGuide.normalRoughness.w -
-                                                 neighborGuide.normalRoughness.w) /
-                                             0.05);
-                float colorWeight = exp(-abs(centerLuminance - luminance(neighbor.rgb)) /
-                                        (4.0 * sigma));
-                float weight = base * positionWeight * normalWeight * roughnessWeight *
-                               colorWeight;
-                valueSum += neighbor.rgb * weight;
-                varianceNumerator += neighbor.w * weight * weight;
-                weightSum += weight;
+void main()
+{
+    FrameData frame = frameData();
+    uint index = gl_GlobalInvocationID.x;
+    uint signalCount = frame.counts.x * DOMAIN_COUNT;
+    if (index >= signalCount) {
+        return;
+    }
+    uint domain = index / frame.counts.x;
+    uint pixel = index - domain * frame.counts.x;
+    uvec2 extent = frame.extentFrameFlags.xy;
+    ivec2 coordinate = ivec2(int(pixel % extent.x), int(pixel / extent.x));
+    uint stepSize = 1u << pc.passIndex;
+    vec4 centerValue = (pc.passIndex & 1u) == 0u ? atrousA.values[index] : atrousB.values[index];
+    BranchResult centerGuide = guidesCurrent.values[index];
+    float centerLuminance = luminance(centerValue.xyz);
+    float sigma = 4.0 * sqrt(max(centerValue.w, 1.0e-8)) + 1.0e-4;
+    vec3 colorSum = vec3(0.0);
+    float varianceSum = 0.0;
+    float weightSum = 0.0;
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            ivec2 sampleCoordinate = coordinate + ivec2(x, y) * int(stepSize);
+            if (any(lessThan(sampleCoordinate, ivec2(0))) ||
+                any(greaterThanEqual(sampleCoordinate, ivec2(extent)))) {
+                continue;
             }
-        }
-        if (weightSum > 0.0) {
-            filteredResult.valueVariance[domain] =
-                vec4(valueSum / weightSum,
-                     varianceNumerator / max(weightSum * weightSum, 1.0e-20));
-        } else {
-            filteredResult.valueVariance[domain] = center;
+            uint samplePixel = pixelIndex(uvec2(sampleCoordinate), extent);
+            uint sampleIndex = signalIndex(samplePixel, domain, frame.counts.x);
+            BranchResult sampleGuide = guidesCurrent.values[sampleIndex];
+            if (!opticalCompatible(centerGuide, sampleGuide)) {
+                continue;
+            }
+            vec4 sampleValue = (pc.passIndex & 1u) == 0u ? atrousA.values[sampleIndex]
+                                                         : atrousB.values[sampleIndex];
+            float baseWeight = kernelWeight(x) * kernelWeight(y);
+            float positionScale = 0.08 + 0.015 * max(centerGuide.guidePosition.w, 0.0);
+            float positionWeight = exp(-distance(centerGuide.guidePosition.xyz,
+                                                 sampleGuide.guidePosition.xyz) /
+                                       (positionScale * float(stepSize) + 1.0e-5));
+            float normalWeight = pow(max(dot(centerGuide.guideNormal.xyz,
+                                             sampleGuide.guideNormal.xyz), 0.0), 32.0);
+            float roughnessWeight = exp(-abs(centerGuide.guideNormal.w - sampleGuide.guideNormal.w) /
+                                        0.08);
+            float luminanceWeight = exp(-abs(centerLuminance - luminance(sampleValue.xyz)) / sigma);
+            float weight = baseWeight * positionWeight * normalWeight * roughnessWeight * luminanceWeight;
+            colorSum += sampleValue.xyz * weight;
+            varianceSum += sampleValue.w * weight * weight;
+            weightSum += weight;
         }
     }
-
-    if (source == 0u)
-        filterPong[pixel] = filteredResult;
-    else
-        filterPing[pixel] = filteredResult;
+    vec4 outputValue = centerValue;
+    if (weightSum > 0.0) {
+        outputValue = vec4(colorSum / weightSum, varianceSum / (weightSum * weightSum));
+    }
+    if ((pc.passIndex & 1u) == 0u) {
+        atrousB.values[index] = outputValue;
+    } else {
+        atrousA.values[index] = outputValue;
+    }
 }

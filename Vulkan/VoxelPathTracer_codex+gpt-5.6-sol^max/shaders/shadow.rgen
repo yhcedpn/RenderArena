@@ -2,18 +2,48 @@
 #extension GL_EXT_ray_tracing : require
 #include "common.glsl"
 
-layout(set = 0, binding = 30) uniform accelerationStructureEXT sceneTlas;
+layout(set = 0, binding = 6) uniform accelerationStructureEXT sceneTlas;
 layout(location = 1) rayPayloadEXT uint visible;
 
-void main() {
+void main()
+{
     uint index = gl_LaunchIDEXT.x;
-    if (index >= counters.shadowCount) return;
-    ShadowTask task = shadowTasks[index];
+    FrameData frame = frameData();
+    vec3 origin;
+    vec3 direction;
+    float maximumDistance;
+    if (pc.auxiliary == 0u) {
+        if (index >= frame.counts.x) {
+            return;
+        }
+        Reservoir reservoir = reservoirSpatial.values[index];
+        if (reservoir.weights.w == 0.0) {
+            shadowVisibility.values[index] = 0u;
+            return;
+        }
+        HitRecord hit = hits.values[index];
+        Light light = lights.values[reservoir.ids.x];
+        vec3 target = lightPoint(light, reservoir.sampleData.xy);
+        vec3 normal = hit.normalFront.w > 0.5 ? hit.normalFront.xyz : -hit.normalFront.xyz;
+        vec3 delta = target - hit.positionT.xyz;
+        maximumDistance = length(delta);
+        direction = delta / maximumDistance;
+        origin = hit.positionT.xyz + normal * RAY_EPSILON;
+    } else {
+        uint count = counters.words[2];
+        if (index >= count) {
+            return;
+        }
+        ShadowTask task = shadowTasks.values[index];
+        origin = task.originTmax.xyz;
+        maximumDistance = task.originTmax.w;
+        direction = task.direction.xyz;
+    }
     visible = 0u;
     traceRayEXT(sceneTlas,
                 gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT |
                     gl_RayFlagsSkipClosestHitShaderEXT,
-                0xffu, 1u, 0u, 1u, task.originTMax.xyz, 1.0e-4,
-                task.direction.xyz, task.originTMax.w, 1);
-    shadowResults[index] = visible;
+                0xff, 0, 0, 1, origin, RAY_EPSILON, direction,
+                max(maximumDistance - 2.0 * RAY_EPSILON, RAY_EPSILON), 1);
+    shadowVisibility.values[index] = visible;
 }

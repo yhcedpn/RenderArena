@@ -1,81 +1,95 @@
 #version 460
-#include "restir.glsl"
+#include "restir_common.glsl"
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-ivec2 neighborOffset(uint pixel, uint frame, uint neighbor) {
-    uint h = pcgHash(pixel ^ (frame * 0x9e3779b9u) ^ (neighbor * 0x85ebca6bu));
-    int x = int(h & 15u) - 7;
-    int y = int((h >> 4u) & 15u) - 7;
-    if (x == 0 && y == 0) x = int(neighbor) + 1;
-    return clamp(ivec2(x, y), ivec2(-8), ivec2(8));
-}
-
-void main() {
+void main()
+{
+    FrameData frame = frameData();
     uint pixel = gl_GlobalInvocationID.x;
-    if (pixel >= pixelCount()) return;
-    RestirSurface targetSurface = surfaceFromShading(shadingPoints[pixel]);
-    if (!targetSurface.valid) {
-        reservoirSpatial[pixel] = emptyReservoir();
+    if (pixel >= frame.counts.x) {
         return;
     }
-    uint frame = floatBitsToUint(globals.cameraPositionFrame.w);
-    ivec2 center = ivec2(int(pixel % globals.extentCounts.x),
-                         int(pixel / globals.extentCounts.x));
-    uint sourceIndices[5];
-    bool sourceValid[5];
-    sourceIndices[0] = pixel;
-    sourceValid[0] = true;
-    for (uint i = 0u; i < 4u; ++i) {
-        ivec2 coordinate = center + neighborOffset(pixel, frame, i);
-        sourceValid[i + 1u] = all(greaterThanEqual(coordinate, ivec2(0))) &&
-                              all(lessThan(coordinate, ivec2(globals.extentCounts.xy)));
-        sourceIndices[i + 1u] = sourceValid[i + 1u]
-                                    ? uint(coordinate.y) * globals.extentCounts.x + uint(coordinate.x)
-                                    : pixel;
-        if (sourceValid[i + 1u]) {
-            RestirSurface neighbor = surfaceFromShading(shadingPoints[sourceIndices[i + 1u]]);
-            sourceValid[i + 1u] = restirCompatible(targetSurface, neighbor);
+    Reservoir center = reservoirTemporal.values[pixel];
+    if (center.weights.w == 0.0) {
+        reservoirSpatial.values[pixel] = center;
+        return;
+    }
+    HitRecord hit = hits.values[pixel];
+    PathState path = pathsA.values[pixel];
+    uint domain = primaryDomain(hit.ids.x);
+    BranchResult centerGuide = guidesCurrent.values[signalIndex(pixel, domain, frame.counts.x)];
+    uvec2 extent = frame.extentFrameFlags.xy;
+    uvec2 centerPixel = uvec2(pixel % extent.x, pixel / extent.x);
+    Reservoir outputReservoir = emptyReservoir();
+    float supportM[5];
+    Reservoir sources[5];
+    BranchResult sourceGuides[5];
+    bool included[5];
+    for (uint source = 0u; source < 5u; ++source) {
+        included[source] = false;
+        supportM[source] = 0.0;
+    }
+    sources[0] = center;
+    sourceGuides[0] = centerGuide;
+    included[0] = true;
+    supportM[0] = center.weights.y;
+    for (uint neighbor = 0u; neighbor < 4u; ++neighbor) {
+        float angle = 2.0 * PI * randomDimension(pixel, frame.extentFrameFlags.z,
+                                                 41u + neighbor * 2u, 0u);
+        float radius = 1.0 + 7.0 * randomDimension(pixel, frame.extentFrameFlags.z,
+                                                   42u + neighbor * 2u, 0u);
+        ivec2 offset = ivec2(round(vec2(cos(angle), sin(angle)) * radius));
+        ivec2 coordinate = ivec2(centerPixel) + offset;
+        if (any(lessThan(coordinate, ivec2(0))) || any(greaterThanEqual(coordinate, ivec2(extent)))) {
+            continue;
         }
+        uint neighborPixel = pixelIndex(uvec2(coordinate), extent);
+        BranchResult guide = guidesCurrent.values[signalIndex(neighborPixel, domain, frame.counts.x)];
+        Reservoir sourceReservoir = reservoirTemporal.values[neighborPixel];
+        if (!guideCompatible(centerGuide, guide) || sourceReservoir.weights.w == 0.0) {
+            continue;
+        }
+        sources[neighbor + 1u] = sourceReservoir;
+        sourceGuides[neighbor + 1u] = guide;
+        included[neighbor + 1u] = true;
+        supportM[neighbor + 1u] = sourceReservoir.weights.y;
     }
 
-    float sumWeights = 0.0;
-    float selectedTarget = 0.0;
-    float totalMultiplicity = 0.0;
-    uvec4 selected = uvec4(0u);
-    for (uint i = 0u; i < 5u; ++i) {
-        if (!sourceValid[i]) continue;
-        Reservoir source = reservoirTemporal[sourceIndices[i]];
-        if (source.selected.w == 0u || source.weights.z <= 0.0) continue;
-        float denominator = 0.0;
-        for (uint j = 0u; j < 5u; ++j) {
-            if (!sourceValid[j]) continue;
-            Reservoir supportReservoir = reservoirTemporal[sourceIndices[j]];
-            float z = reservoirNormalizer(supportReservoir);
-            if (supportReservoir.selected.w == 0u || z <= 0.0) continue;
-            RestirSurface support = surfaceFromShading(shadingPoints[sourceIndices[j]]);
-            float targetAtSupport = evaluateLightSample(support, source.selected).target;
-            denominator += supportReservoir.weights.z * targetAtSupport / z;
+    vec3 direction;
+    float distanceToLight;
+    for (uint source = 0u; source < 5u; ++source) {
+        if (!included[source]) {
+            continue;
         }
-        float target = evaluateLightSample(targetSurface, source.selected).target;
-        float candidateWeight = denominator > 0.0 ? target * source.weights.z / denominator : 0.0;
-        if (candidateWeight > 0.0 && !isnan(candidateWeight)) {
-            sumWeights += candidateWeight;
-            if (randomFloat(pixel, frame, 144u + i, 0u) < candidateWeight / sumWeights) {
-                selected = source.selected;
-                selectedTarget = target;
-            }
+        float target;
+        float proposal;
+        evaluateDirectAtHit(hit, path, sources[source].ids.x, sources[source].sampleData.xy,
+                            target, proposal, direction, distanceToLight);
+        float weight = target * sources[source].weights.z * supportM[source];
+        reservoirUpdate(outputReservoir, sources[source].ids.x, sources[source].sampleData.xy, target, proposal,
+                        weight, randomDimension(pixel, frame.extentFrameFlags.z, 53u + source, 0u));
+    }
+    float selectedTarget;
+    float selectedProposal;
+    evaluateDirectAtHit(hit, path, outputReservoir.ids.x, outputReservoir.sampleData.xy, selectedTarget, selectedProposal,
+                        direction, distanceToLight);
+    float correctedM = 0.0;
+    for (uint source = 0u; source < 5u; ++source) {
+        if (included[source] && targetAtGuide(sourceGuides[source], outputReservoir.ids.x, outputReservoir.sampleData.xy,
+                                              frame.cameraPosition.xyz) > 0.0) {
+            correctedM += supportM[source];
         }
-        totalMultiplicity += source.weights.z;
     }
-    Reservoir resultReservoir = emptyReservoir();
-    if (selected.w != 0u && selectedTarget > 0.0 && sumWeights > 0.0) {
-        float cappedMultiplicity = min(totalMultiplicity, 32.0);
-        float recordedWeightSum = sumWeights;
-        if (totalMultiplicity > 32.0) recordedWeightSum *= 32.0 / totalMultiplicity;
-        resultReservoir.selected = selected;
-        resultReservoir.weights = vec4(recordedWeightSum, selectedTarget, cappedMultiplicity,
-                                       sumWeights / selectedTarget);
+    outputReservoir.sampleData.z = selectedTarget;
+    outputReservoir.sampleData.w = selectedProposal;
+    outputReservoir.weights.z = correctedM > 0.0 && selectedTarget > 0.0
+                           ? outputReservoir.weights.x / (correctedM * selectedTarget)
+                           : 0.0;
+    outputReservoir.weights.w = outputReservoir.weights.z > 0.0 ? 1.0 : 0.0;
+    if (correctedM > 32.0) {
+        outputReservoir.weights.x *= 32.0 / correctedM;
     }
-    reservoirSpatial[pixel] = resultReservoir;
+    outputReservoir.weights.y = min(correctedM, 32.0);
+    reservoirSpatial.values[pixel] = outputReservoir;
 }

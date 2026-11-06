@@ -1,17 +1,16 @@
 #version 460
-#extension GL_EXT_ray_tracing : require
-#include "common.glsl"
+#include "rt_common.glsl"
 
-layout(set = 0, binding = 30) uniform accelerationStructureEXT sceneTlas;
-layout(location = 0) rayPayloadEXT uint payloadIndex;
-
-void main() {
+void main()
+{
     uint index = gl_LaunchIDEXT.x;
-    uint inputQueue = pushData.u0.x;
-    uint count = counters.queueCount[inputQueue];
-    if (index >= count) return;
-    PathState path = inputQueue == 0u ? pathsA[index] : pathsB[index];
-    payloadIndex = index;
-    traceRayEXT(sceneTlas, gl_RayFlagsOpaqueEXT, 0xffu, 0u, 0u, 0u,
-                path.originCone.xyz, 1.0e-4, path.directionSpread.xyz, 1.0e4, 0);
+    uint count = counters.words[0];
+    if (index >= count) {
+        return;
+    }
+    PathState path = (pc.passIndex & 1u) == 0u ? pathsA.values[index] : pathsB.values[index];
+    radiancePayload.pathIndex = index;
+    radiancePayload.hit = 0u;
+    traceRayEXT(sceneTlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0,
+                path.originTmin.xyz, path.originTmin.w, path.directionCone.xyz, 1.0e30, 0);
 }

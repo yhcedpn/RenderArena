@@ -2,29 +2,34 @@
 #extension GL_EXT_ray_tracing : require
 #include "common.glsl"
 
-layout(location = 0) rayPayloadInEXT uint payloadIndex;
+struct RadiancePayload {
+    uint pathIndex;
+    uint hit;
+};
+layout(location = 0) rayPayloadInEXT RadiancePayload radiancePayload;
 hitAttributeEXT vec2 barycentrics;
 
-void main() {
+void main()
+{
     uint triangleIndex = gl_InstanceCustomIndexEXT + gl_PrimitiveID;
-    TriangleInfo triangle = triangles[triangleIndex];
-    Vertex a = vertices[triangle.indicesMaterial.x];
-    Vertex b = vertices[triangle.indicesMaterial.y];
-    Vertex c = vertices[triangle.indicesMaterial.z];
-    vec3 weights = vec3(1.0 - barycentrics.x - barycentrics.y,
-                        barycentrics.x, barycentrics.y);
-    vec3 normal = safeNormalize(a.normalV.xyz * weights.x + b.normalV.xyz * weights.y +
-                                c.normalV.xyz * weights.z);
-    vec2 uv = vec2(a.positionU.w, a.normalV.w) * weights.x +
-              vec2(b.positionU.w, b.normalV.w) * weights.y +
-              vec2(c.positionU.w, c.normalV.w) * weights.z;
-    bool frontFace = dot(gl_WorldRayDirectionEXT, normal) < 0.0;
-    HitRecord hit;
-    hit.positionT = vec4(gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT,
-                         gl_HitTEXT);
-    hit.normalHit = vec4(normal, 1.0);
-    hit.uvCone = vec4(uv, 0.0, 0.0);
-    hit.ids = uvec4(triangle.indicesMaterial.w, triangle.identity.x, triangleIndex,
-                    frontFace ? 1u : 0u);
-    hits[payloadIndex] = hit;
+    uint i0 = indices.values[triangleIndex * 3u];
+    uint i1 = indices.values[triangleIndex * 3u + 1u];
+    uint i2 = indices.values[triangleIndex * 3u + 2u];
+    float b0 = 1.0 - barycentrics.x - barycentrics.y;
+    Vertex v0 = vertices.values[i0];
+    Vertex v1 = vertices.values[i1];
+    Vertex v2 = vertices.values[i2];
+    vec3 outward = normalize(b0 * v0.normal.xyz + barycentrics.x * v1.normal.xyz +
+                             barycentrics.y * v2.normal.xyz);
+    vec2 uv = b0 * v0.uv.xy + barycentrics.x * v1.uv.xy + barycentrics.y * v2.uv.xy;
+    bool front = dot(gl_WorldRayDirectionEXT, outward) < 0.0;
+    HitRecord record;
+    record.positionT = vec4(gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT, gl_HitTEXT);
+    record.normalFront = vec4(outward, front ? 1.0 : 0.0);
+    record.uvCone = vec4(uv, 0.0, 0.0);
+    record.ids = uvec4(triangles.values[triangleIndex].data.x,
+                       triangles.values[triangleIndex].data.y,
+                       triangleIndex, triangles.values[triangleIndex].data.z);
+    hits.values[radiancePayload.pathIndex] = record;
+    radiancePayload.hit = 1u;
 }

@@ -1,0 +1,23 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint nextCount = counters.words[1];
+    uint shadowCount = counters.words[2];
+    counters.words[0] = nextCount;
+    counters.words[4] = max(nextCount, 1u);
+    counters.words[5] = 1u;
+    counters.words[6] = 1u;
+    counters.words[8] = (nextCount + 63u) / 64u;
+    counters.words[9] = 1u;
+    counters.words[10] = 1u;
+    counters.words[12] = max(shadowCount, 1u);
+    counters.words[13] = 1u;
+    counters.words[14] = 1u;
+    counters.words[16] = (shadowCount + 63u) / 64u;
+    counters.words[17] = 1u;
+    counters.words[18] = 1u;
+}

@@ -8,41 +8,45 @@
   <ItemGroup>
     <ClCompile Include="main.cpp"><Filter>源文件</Filter></ClCompile>
     <ClCompile Include="src\materials.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\renderer.cpp"><Filter>源文件</Filter></ClCompile>
     <ClCompile Include="src\scene.cpp"><Filter>源文件</Filter></ClCompile>
-    <ClCompile Include="src\vulkan_app.cpp"><Filter>源文件</Filter></ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\common.hpp"><Filter>头文件</Filter></ClInclude>
     <ClInclude Include="src\materials.hpp"><Filter>头文件</Filter></ClInclude>
-    <ClInclude Include="src\math.hpp"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\renderer.hpp"><Filter>头文件</Filter></ClInclude>
     <ClInclude Include="src\scene.hpp"><Filter>头文件</Filter></ClInclude>
-    <ClInclude Include="src\vulkan_app.hpp"><Filter>头文件</Filter></ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="shaders\atrous.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\commit_history.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\common.glsl"><Filter>源文件</Filter></None>
-    <None Include="shaders\compose.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\continuation.rgen"><Filter>源文件</Filter></None>
-    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
-    <None Include="shaders\fullscreen.vert"><Filter>源文件</Filter></None>
-    <None Include="shaders\make_indirect.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\primary.rgen"><Filter>源文件</Filter></None>
-    <None Include="shaders\radiance.rchit"><Filter>源文件</Filter></None>
-    <None Include="shaders\radiance.rmiss"><Filter>源文件</Filter></None>
-    <None Include="shaders\resolve_branches.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\restir_initial.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\restir_shadow.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\restir_spatial.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\restir_temporal.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\restir.glsl"><Filter>源文件</Filter></None>
-    <None Include="shaders\shade.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\shadow_resolve.comp"><Filter>源文件</Filter></None>
-    <None Include="shaders\shadow.rgen"><Filter>源文件</Filter></None>
-    <None Include="shaders\shadow.rmiss"><Filter>源文件</Filter></None>
-    <None Include="shaders\svgf_temporal.comp"><Filter>源文件</Filter></None>
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md"><Filter>资源文件</Filter></None>
     <None Include="materials.json"><Filter>资源文件</Filter></None>
+    <None Include="shaders\atrous.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\clear.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\compose.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\continuation.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\guide_init.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\prepare_args.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\primary.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\radiance.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\radiance.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\reset_counts.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_initial.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_spatial.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\restir_temporal.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\rt_common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\shade.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shading_common.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow_resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\signal_resolve.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\svgf_temporal.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\svgf_variance.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\terminal_resolve.comp"><Filter>源文件</Filter></None>
   </ItemGroup>
 </Project>

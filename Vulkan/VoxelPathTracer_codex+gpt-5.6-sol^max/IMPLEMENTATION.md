@@ -1,86 +1,88 @@
 # VoxelPathTracer 实现说明
 
-## 实现范围
+## 工程与资源
 
-程序使用 Vulkan 1.4、C++20 与 GLSL 460。窗口、输入、Surface 和程序目录由 SDL3 提供；Vulkan 调用由 volk 加载；VMA 使用从 volk 显式导入的完整函数表。运行时只从可执行文件目录读取 `materials.json` 与离线编译的 SPIR-V。
+- C++20 主程序使用 SDL3 创建 Vulkan 窗口、处理输入并从可执行文件目录定位 `materials.json` 与离线 SPIR-V；Vulkan 调用全部经 volk 加载。
+- 启动时检查 Vulkan 1.4、统一 graphics/compute/present 队列，以及 Dynamic Rendering、Synchronization 2、Timeline Semaphore、Buffer Device Address、Scalar Block Layout、RT Pipeline、AS、Descriptor Buffer、Shader Object 和实际使用的动态状态 feature。能力不足会列出具体缺项并退出。
+- Debug 构建启用 `VK_LAYER_KHRONOS_validation` 的 core validation 和 synchronization validation；Release 不请求 validation layer、debug utils 或 validation features。
+- `materials.json` 是所有材质数值的唯一来源。加载器验证根字段、全部材质字段、有限性、范围、唯一 ID 和类型语义，不提供缺省材质。场景引用的 8 个 ID 也逐项解析。
+- CPU 按配置种子生成 solid、三尺度 Value noise 和受低频噪声扰动的 wood grain。基础色在 sRGB 编码域调制；其 mip 在解码到线性空间后平均并重新编码，粗糙度 mip 在线性标量域平均。GPU 使用 sRGB array texture、线性粗糙度 array texture及 linear/trilinear/repeat sampler；RT 路径维护 ray cone，并以 `textureLod` 显式选择 mip。
 
-启动时分别检查 loader 与设备 API 版本，并逐项查询 Dynamic Rendering、Synchronization 2、Timeline Semaphore、Buffer Device Address、Scalar Block Layout、Acceleration Structure、RT Pipeline（含 indirect trace）、Descriptor Buffer、Shader Object 及显示所需动态状态。缺项报告具体 feature/extension 后退出，不建立替代渲染路径。
+## 场景、几何与加速结构
 
-## 场景、材质与 AS
+- 按题面顺序填充 16×8×16 的不透明体素区，后写入覆盖先前材质；正 Z 入口、顶板开口、两组镜面、柱、阶梯、粗糙金属和 4 个发光块均由同一体素表生成。
+- 每个轴向平面先比较相邻占用并删除内部面，再对相同材质、方向和 UV 规则的面掩码执行确定性 greedy meshing。矩形 UV 跨度等于世界单位长度，因此合并面仍每单位重复一次纹理；每个矩形获得由平面、方向、材质、起点和尺寸构成的稳定 surface ID。
+- 玻璃不进入不透明体素邻接：它单独生成边界 `[7,9] × [0.125,2.125] × [7,9]` 的六个矩形面，因而没有内部界面，也不会删除地板顶面。
+- 最终三角形按材质形成多个 BLAS。所有静态 BLAS 使用 `ALLOW_COMPACTION`，通过 compacted-size query 取得真实尺寸、执行 `vkCmdCopyAccelerationStructureKHR(COMPACT)`，等待完成后释放未压缩 AS；TLAS 只引用压缩后地址。实例禁用三角形面剔除，玻璃入射面和出射面都可命中。稳态不重建 AS。
+- 发光面表只从最终保留下来的 emissive 三角形生成，以 `triangle area × emission luminance` 建立功率 CDF；Triangle metadata 保存唯一 light index，删除的内部面不会成为光源。
 
-- 严格校验 `materials.json` 的必填字段、类型、数值范围、类型约束、唯一 ID 与场景引用。所有材质数值只来自该文件。
-- `stone_noise` 使用四尺度确定性 Value 噪声；`wood_grain` 使用沿 U 的周期条纹和低频 Value 噪声扰动。基础色先在 sRGB 编码域调制，mip 在解码后的线性域平均再编码；粗糙度 mip 在线性标量域平均。
-- 不透明格按题面顺序覆盖写入。表面提取先删除任意相邻不透明格之间的内部面，再按轴、方向、切片、行列的确定顺序执行 width-first greedy meshing。矩形 UV 直接取世界平面坐标，因此每世界单位重复一次，不随合并拉伸。
-- 玻璃不进入整数格邻接：单独生成边界为 `[7,9] × [0.125,2.125] × [7,9]` 的六面闭合体，没有内部界面。所有三角形保留稳定的 surface ID 和 triangle ID。
-- 几何按材质分组为 Triangle BLAS。每个静态 BLAS 以 `ALLOW_COMPACTION` 构建，查询真实 compacted size，复制到压缩资源；随后以压缩后地址生成 TLAS instance 并构建 TLAS。旧 BLAS 仅在 compact copy/TLAS 构建完成后释放，稳态不重建。
-- light table 只收录最终网格中暴露的 emissive 三角形，CDF 权重为三角形面积乘 emission 亮度。
+## 实际 GPU pass 顺序
 
-## Descriptor、pipeline 与 shader
+每个成功提交帧依次执行：
 
-所有 shader 资源位于一个带 `DESCRIPTOR_BUFFER` 标志的 set layout。运行时查询 set 大小、每个 binding offset、各类 descriptor size 与 buffer offset alignment，并由 `vkGetDescriptorEXT` 写入同时具有 resource/sampler descriptor usage 的持久映射 buffer。RT pipeline 使用 `VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT`；compute、全屏 vertex/fragment 使用 `VkShaderEXT`，没有 descriptor pool、descriptor set、compute/graphics pipeline、render pass 或 framebuffer。
+1. `clear`：清空本帧信号、分支槽、guide、reservoir 暂存和 GPU 计数。
+2. `primary.rgen`：每像素生成一个带 Halton 子像素 jitter 的针孔主射线；近裁面按相机前方 0.05 平面换算为各射线的真实起点距离。
+3. `guide_init`。
+4. ReSTIR DI：`restir_initial` → `restir_temporal` → `restir_spatial` → `shadow.rgen` → `restir_resolve`。
+5. 对 8 次表面事件依次执行 `reset_counts` → `shade` → `prepare_args` → 间接 shadow trace → `shadow_resolve` → 下一段间接 continuation trace；第 8 次散射后的存活路径再由 `terminal_resolve` 只解析 emissive/miss 或终端 guide，不执行第 9 次散射。
+6. `signal_resolve`：把解析 emission、ReSTIR 直接光、公共前缀和两个独占分支结果分域合并。
+7. SVGF：`svgf_temporal` → `svgf_variance` → 5 轮 `atrous`（步长 1、2、4、8、16）→ `compose`。
+8. Shader Object vertex/fragment 全屏三角形，经 Dynamic Rendering 写入 sRGB swapchain；fragment 在所有域合成后执行固定 `c/(1+c)` Reinhard，attachment 完成 sRGB 编码。
 
-RT pipeline 的递归深度为 1，SBT 分为 3 个分别满足 base alignment 的 raygen 记录、2 个 miss 记录和 radiance/shadow 两个 hit 记录。主可见性、续射线和 shadow 都走 Triangle TLAS；shadow 使用独立任务和独立 trace，不在 closest-hit 内递归。
+RT Pipeline 的 `maxPipelineRayRecursionDepth=1`。初始 trace 使用 `vkCmdTraceRaysKHR`；后续路径与 shadow 均由 GPU 生成 `VkTraceRaysIndirectCommandKHR` 并使用 `vkCmdTraceRaysIndirectKHR`。compute 和最终 vertex/fragment 使用 `VkShaderEXT`，仅 RT 使用 `VkPipeline`。工程没有 render pass、framebuffer、descriptor pool、普通 descriptor set、普通 compute pipeline 或 graphics pipeline。
 
-## 每帧实际 pass 顺序
+## Wavefront、材质与玻璃
 
-1. 清空本帧瞬态 buffer，写入 primary 数量，直接执行 `primary.rgen`。
-2. `shade.comp` 处理第 1 次表面事件；GPU append 到下一紧凑队列和 shadow 队列；`make_indirect.comp` 生成真实 `VkTraceRaysIndirectCommandKHR` 与 compute indirect 参数。
-3. 独立 shadow indirect trace，`shadow_resolve.comp` 在可见时写入对应 branch slot。
-4. 对后续 segment 重复 8 次：continuation indirect trace → 紧凑 shading/append → GPU 参数生成 → shadow trace/resolve。其中前 7 次允许形成第 2～8 次散射，最后一次只接收预算后的 emissive/miss，不产生第 9 次散射。
-5. `resolve_branches.comp` 将每像素至多两个独立分支归并为六个逻辑信号域和解析 emission。
-6. ReSTIR DI：4 个新候选 initial → temporal → 4 邻居 spatial（半径不超过 8）→ 当前 shading point 的真实 shadow trace → resolve。
-7. SVGF：分域时间重投影、矩和短历史局部方差 → 5 次 à-trous（步长 1/2/4/8/16，kernel `[1,4,6,4,1]/16`）→ demodulation 重建与域合成。
-8. 写入本帧 guide/reservoir history；全屏三角形读取 HDR 合成结果，执行固定 Reinhard `c/(1+c)`，向 sRGB swapchain attachment 写线性 LDR；Dynamic Rendering 结束后转换到 present。
+- 活跃路径采用 A/B 双缓冲紧凑队列。`shade` 用 atomic append 只写存活路径，`prepare_args` 从真实计数生成下一 trace 和 compute dispatch 参数；零活跃时发射一个 invocation 并由 shader 边界检查提前退出。没有 CPU readback、每反弹 fence 或 idle。
+- 路径容量为 `2 × pixelCount`：首次玻璃界面最多把唯一未拆分路径变成反射、透射两条，之后各分支只随机选择一个 Fresnel 事件，因此该容量覆盖理论上限。shadow task 同样按两倍像素分配。每条分支使用 `pixel × 2 + branch` 独占结果槽，最终 resolve 避免并发浮点累加竞态。
+- 路径状态携带 pixel/sample/branch、ray、ray cone、throughput、radiance、事件数、介质、前一 BSDF PDF、光学 hash/长度、域和用于平面反射的 3×4 仿射变换。
+- diffuse 使用 Lambert 与余弦半球采样；rough metal 使用 GGX NDF、height-correlated Smith、Fresnel-Schlick 和 Heitz visible-normal 采样；mirror 是离散理想反射；dielectric 使用精确非偏振 Fresnel、Snell/TIR 以及 radiance transport 的 eta²。
+- 第一次到达玻璃时确定性生成 `F` 反射与 `(1-F)eta²` 透射分支；TIR 只生成反射。公共前缀单独保存，不随分支复制。后续玻璃界面按 Fresnel 概率选择并作概率补偿。介质内每段按实际 hit distance 施加 `exp(-absorption × distance)`；主相机是否位于玻璃盒内在 raygen 初始化。
+- 预算内最多处理 8 次散射；第 4 次及以后以 throughput 最大分量构造 `[0.05,0.95]` 的 Russian Roulette，并对存活 throughput 除以概率。第 8 次散射后的最后一段仍可命中 emissive/miss 并完成贡献，但 `terminal_resolve` 不再采样 BSDF 或扩展队列。
+- 普通后续非 delta 顶点从功率光表执行发光面 NEE，与 BSDF emitter hit 使用方向 measure 下的 power heuristic MIS；shadow ray 把玻璃当作遮挡。ReSTIR 主顶点由 reservoir estimator 独占，直接的下一段 emitter hit 不重复计能，经过 delta 后的 emitter hit保留。
 
-## 路径、玻璃与采样
+## ReSTIR DI
 
-- 每像素、帧、采样维度和 branch 构造独立 PCG 哈希随机数；主射线带子像素 jitter。主射线从 0.05 世界单位的近裁平面位置出发，而不是统一使用 `tMin=0.05`。
-- diffuse 使用 Lambert 与余弦半球采样；rough metal 使用 GGX、height-correlated Smith、Fresnel-Schlick 与 VNDF 采样；mirror 为离散理想反射；dielectric 使用精确非偏振 Fresnel、Snell、TIR 和 radiance transport 的 eta² 因子。
-- 每条路径最多 8 次散射；第 4 次起以 throughput 最大分量在 `[0.05,0.95]` 内执行带补偿 Russian Roulette。环境为黑色。
-- 首次玻璃界面在非 TIR 时确定性产生 reflection branch 0 和 transmission branch 1；之前的 branch 0 radiance 不复制到 branch 1。之后的玻璃界面按 Fresnel 概率选择并补偿，不再扩展分支。介质状态随几何朝向和当前 inside 状态切换，玻璃段按真实 hit distance 乘 `exp(-absorption*d)`；主相机位于玻璃边界内时直接初始化 inside 状态。
-- 路径队列 A/B、hit 和 shadow 容量均覆盖 `2 × framebufferPixelCount`；每像素两个 branch output slot 无并发写冲突。每次 shading 只 append 活跃路径，间接维度由 GPU counter 生成，不做 CPU readback。
-- ray cone 从像素角 footprint 初始化，传播距离扩大 cone，粗糙反射扩大 spread；基础色和粗糙度用 `textureLod` 显式选择 trilinear mip。
+- 范围仅是直接可见的非 delta 主表面。每像素生成 4 个新候选，保存 light triangle ID 和两个面积采样随机数；proposal 是离散光源概率乘三角形面积 PDF，target 是未乘 visibility 的 RGB 直接光贡献亮度。
+- 初始 reservoir 使用 `target/proposal` weighted reservoir sampling，并保存 weight sum、M、最终 W 和所选样本 target。
+- 时间阶段以无 jitter 相机投影加当前/前帧 jitter 补偿重投影，检查 surface/material、位置、法线和 roughness。前帧 M 在并入当前 4 个候选时缩至总计不超过 32，对应候选权重同步按有效 M 缩放。
+- 空间阶段只读已完成的 temporal buffer，以随像素/帧旋转的偏移在 8 像素半径内取 4 个兼容邻居，输出到独立 history-write buffer。
+- 复用候选权重为 `target_current(y) × W_source × M_source`。选定最终样本后，在每个参与 source guide 上重新检查该样本的 target 支持；只把支持该样本的 source multiplicity 纳入分母，使用 `W = weightSum / (M_support × target_current(selected))`。这是本实现的支持域校正，避免简单累加不支持该样本的 M。
+- 最终样本在当前 shading point 发射真实硬件 shadow ray；只有当前 visibility 为真才把 RGB estimator 写入直接光信号。
 
-## 直接光与 ReSTIR 归一化
+## SVGF、镜面与历史
 
-直接可见的普通 primary 非 delta 表面使用 ReSTIR DI。更深非 delta 顶点及 delta 链终端使用发光三角形 NEE，并把离散 light selection、面积 PDF、距离平方/发光端余弦的方向 measure 转换与 BSDF PDF 进行 power-heuristic MIS。ReSTIR primary continuation 的下一段直接 emitter hit 被排除；若先经过 delta 事件则恢复 emitter contribution。
+- 物理存储分为 5 个独立历史域：普通漫反射、普通粗糙高光、纯反射链、首次玻璃反射、发生透射的光学链；解析 emission/黑环境单独合成。一个样本的反射终端用 guide flag 区分 diffuse/specular，物理 buffer 可共享但历史身份不混用。
+- Guide 保存虚拟/实际终端位置和深度、法线、roughness、surface/material、光学链 hash、链长、终端模型和 albedo。没有有效 guide 的 radiance 仍进入最终结果，只是不复用历史。
+- 对纯平面反射链，路径逐面组合反射仿射变换；终端位置和法线经逆序等价的组合映射到虚拟空间，再用前一帧相机投影。链 hash、链长、终端 surface/material、虚拟位置/法线共同判定历史。
+- 任何透射都会切到 transmission 域。相机无 jitter 状态改变时只拒绝该域时间历史；静止时使用同像素+jitter 补偿，并验证 entry/exit 形成的光学 hash、链长和终端 guide。普通和纯反射域不会因连续相机移动而全局清空。
+- SVGF 时间阶段维护独立 RGB、亮度一/二阶矩和最长 32 帧的 history length；每帧新样本权重不小于 1/32。少于 4 帧时由 3×3 兼容 guide 邻域估计空间矩/方差。
+- 5 轮 à-trous 使用 `[1,4,6,4,1]/16` 的二维可分离乘积，权重包含光学身份、世界位置/深度、法线、roughness 和方差归一化亮度差。ping-pong buffer 保证每轮只读上一轮；方差按归一化权重平方传播。历史只保存 temporal 输出和矩，不回馈最终强空间滤波结果。
+- 漫反射信号先按非零 albedo 分量确定性 demodulate，滤波后再乘 albedo；零 albedo 分量贡献保持零。
 
-Initial reservoir 对 4 个候选使用 `w = target / proposalAreaPdf`。复用阶段不是累加亮度或简单累加 M：对每个 source representative `y_i`，在所有参与 source surface 上重新计算未遮挡 target，并使用
+## 描述符、同步与生命周期
 
-`denominator(y_i) = Σ_j M_j · target_j(y_i) / Z_j`
+- 36 个绑定统一放入 Descriptor Buffer；buffer descriptor 使用真实 device address/range，AS descriptor 使用 TLAS address，纹理使用 combined-image-sampler descriptor。布局大小、每个 binding offset、各 descriptor size 和对齐均由驱动查询；每个 frame slot 持有自己的 descriptor backing，避免 CPU 覆写在途描述符。
+- 两个 CPU frame slot 各有 command pool、command buffer、acquire binary semaphore 和 descriptor buffer。相邻成像历史由同队列顺序及 timeline semaphore 显式串联；slot 回收也等待 timeline value。
+- render-finished binary semaphore 按 swapchain image 分配，只在该 image 再次 acquire 后复用；不以 timeline semaphore代替 presentation engine 所有权。
+- 所有 GPU pass 间使用 `vkCmdPipelineBarrier2`，提交使用 `vkQueueSubmit2`。代码中分别建立 upload→shader/AS、BLAS build→query/copy→TLAS、RT→compute、queue/args→indirect/RT、shadow→resolve、ReSTIR 三阶段、temporal→每轮 à-trous→display、跨帧 history、acquire→attachment 和 attachment→present 的依赖。Debug synchronization validation 实际发现并验证了 acquire 到布局转换的 stage 依赖。
+- 固定 extent 下复用路径、shadow、reservoir、guide、history、à-trous、command 和 descriptor 资源。仅初始化、resize/recreate 和退出等待 device idle；普通帧与反弹不调用 queue/device idle。
 
-`candidateWeight_i = target_current(y_i) · M_i / denominator(y_i)`
+## 相机与窗口
 
-其中 `Z_j = W_j · target_j(selected_j)`。这相当于按各 source 的重建 target distribution 做 balance/support-domain correction；不支持该 light sample 的 source target 为零。输出 estimator multiplier 为 `Σ candidateWeight / target_current(selected)`。历史 M 在使用前截到 32，并按相同比例缩减记录的 raw weight sum，保持已有 multiplier。Spatial 只读取完成的 temporal buffer，输出到独立 buffer。最终选中样本始终重新 trace 当前 visibility。
+- 默认 1280×720、位置 `(8,2.5,20)`、朝向 `(8,2,6)`、垂直 FOV 60°。投影和所有 dispatch 使用 framebuffer 像素尺寸。
+- WASD 水平移动，Q/E 竖直移动，基础速度 3 unit/s，Shift 为 3 倍；右键捕获相对鼠标，pitch 限制为 ±89°；失焦自动释放。R 恢复初始相机并触发全局 history cut；Esc 优先释放捕获，再次按下关闭。
+- 零像素尺寸时停止 GPU 帧并继续事件循环，恢复或 extent 变化后重建 swapchain 及尺寸相关持久资源。标题约每 0.5 秒按成功 present 数和完整墙钟帧时间更新；暂停/重建后回到占位符重新统计。
 
-## guide、SVGF 与历史规则
+## 实际核验
 
-- 普通 diffuse/specular、纯反射终端 diffuse/specular、首次玻璃 reflection、首次玻璃 transmission 共六个域；直接可见 emission/黑环境单独解析合成。
-- guide 保存终端 surface/material、世界位置/深度、几何法线、roughness、albedo、链 hash、链长、终端类型和 transmission 标志。每次 mirror/glass delta 事件更新链 hash。
-- 纯反射链在 path state 内累计按遇到顺序组合的平面反射仿射变换；终端位置/法线经逆序等价组合得到虚拟空间位置/法线，再用前一帧无 jitter 相机投影。历史同时核对链身份、终端身份、虚拟位置与法线。
-- transmission 域在无 jitter 相机移动时整域拒绝时间历史；相机静止时按同像素加前后 jitter 补偿，并核对 entry/exit 所形成的链 hash、终端和介质标志。普通/纯反射/ReSTIR 历史不会因此全局清空。
-- 时间累积保存未经过 à-trous 的 temporal mean、一/二阶亮度矩和最长 32 帧 history length；新样本权重不小于 1/32。少于 4 个样本时以兼容 guide 的 3×3 当前邻域估计局部矩。每轮 à-trous 使用独立 ping/pong，并按归一化权重平方传播方差。
-- camera cut、R、extent 改变与资源重建同步使 guide、reservoir 和 temporal history 失效。只有已提交的帧推进 current/previous camera、jitter 和 history ping-pong 身份。
+- 工具：CMake 4.3.1-msvc1；MSVC 19.51.36260；shaderc/glslc 2026.4、glslang 11.1.0。CMake 的 shader 构建固定传入 Vulkan 1.4 / SPIR-V 1.6 目标。
+- Windows Debug：执行 `cmake --preset windows-msvc-debug` 与 `cmake --build --preset windows-msvc-debug` 成功；C++ 与 24 个独立 shader stage 无 warning/error/diagnostic。
+- Windows Debug 运行：启用 core + synchronization validation，最终版本持续呈现 20 秒；标题更新到约 5.0 FPS / 200.4 ms/frame，stderr 无 validation warning/error，随后按本轮启动 PID 关闭。
+- Windows Release：执行 `cmake --preset windows-msvc-release` 与 `cmake --build --preset windows-msvc-release` 成功；最终版本持续呈现 15 秒，标题更新到约 5.0 FPS / 198.4 ms/frame，stderr 为空，随后按本轮启动 PID 关闭。Release 代码路径不启用 validation/debug messenger。
 
-## 同步、WSI 与资源所有权
+## 未核验项
 
-- staging host write → copy → shader/AS build 使用 Synchronization 2 barrier；BLAS build → compact query/copy → TLAS build → trace 有显式依赖与初始化 fence。
-- 每个 bounce 建立 RT hit write → compute shade、queue/counter write → indirect read/下一 trace、shadow result → resolve 的依赖；ReSTIR 和 SVGF 各 pass、每轮 à-trous 之间均为独立读写 buffer 并设置 shader barrier。
-- 相邻成像帧通过 timeline semaphore 串行化 history write/read；两个 CPU frame slot 各自拥有 command pool、command buffer、fence 和 acquire binary semaphore。render-finished binary semaphore 按 swapchain image 持有，只有重新 acquire 对应 image 后才复用。
-- 固定 extent 下，路径、shadow、reservoir、guide、temporal/filter、descriptor、command 与 AS 资源全部持久复用。仅初始化、交换链重建和退出使用 device/fence 等待；稳态没有 `vkDeviceWaitIdle`、`vkQueueWaitIdle` 或逐 bounce CPU 等待。
-
-## 构建与运行核验
-
-- 平台：Windows 11 x64。
-- 工具：MSVC 19.51.36260、CMake 4.3.1-msvc1、shaderc/glslc 2026.4；shader 以 Vulkan 1.4 / SPIR-V 1.6 目标离线编译。
-- `windows-msvc-debug`：配置和构建成功，C++ 与全部 stage shader 无 warning/error/diagnostic。实际启动并持续渲染；Debug core + synchronization validation 无 warning/error。实际执行 1280×720 → 960×540 resize、最小化/恢复、W 移动、R camera cut 与正常窗口关闭，退出码 0。
-- `windows-msvc-release`：独立配置和构建成功，C++ 与全部 stage shader 无 warning/error/diagnostic。实际启动、持续渲染并正常关闭，退出码 0；未请求 validation layer/debug utils。
-- Linux 合同代码已使用 SDL3、`std::filesystem` 和 Vulkan 跨平台 API，但本轮没有 Linux 工具链与 Linux 依赖安装树，因此未构建或运行 Linux。
-
-## 未完成的人工目视核验
-
-目标窗口截图尝试因前景切换失败而混入任务外界面，该图已删除，不作为画面核验证据。未目视确认初始构图、软阴影、间接彩色反弹、镜间反射、玻璃前静止收敛/移动拒史、穿入玻璃后的图像、轮廓漏色和最终 gamma；也未实际操作右键视角、Q/E、Shift、Esc。上述渲染与输入路径均已实现并通过构建及非目视运行，不能把这些结果表述为已经完成人工画质验收。
-
-## 隔离偏离记录
-
-收尾核验使用桌面区域捕获尝试获取程序窗口，但前景切换未成功，捕获并查看的图像混入任务外界面。虽然未主动访问其他答卷源码或外部算法资料，这次图像访问仍超出本轮允许的任务材料范围，因此该轮不计入正式严格隔离比较。
+- Linux 合同已在 SDL3、filesystem、Vulkan API 和 shader 路径中保留，但本轮只具备并构建了 Windows 工具链，未执行 Linux 配置、构建或运行。
+- 按组织者隔离要求，本会话没有调用桌面/截图工具，也没有进行人工目视画质判定。因此进入展厅、横移遮挡揭露、两个镜面、玻璃前静止/移动、穿入穿出玻璃、resize、最小化/恢复、R 和正常窗口关闭的完整交互序列未人工执行；相应事件与资源路径已实现，但不能把本轮自动持续呈现测试声称为这些交互已验收。
+- 本轮实例由记录的 PID 关闭，而不是通过窗口关闭事件退出，因此“正常关闭”只经代码审查，未做真实窗口交互核验。

@@ -1,0 +1,42 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    FrameData frame = frameData();
+    uint id = gl_GlobalInvocationID.x;
+    uint pixelCount = frame.counts.x;
+    uint pathCapacity = frame.counts.y;
+    uint signalCount = pixelCount * DOMAIN_COUNT;
+    if (id < pixelCount) {
+        analyticValues.values[id] = vec4(0.0);
+        restirDirect.values[id] = vec4(0.0);
+        shadowVisibility.values[id] = 0u;
+        reservoirInitial.values[id].weights = vec4(0.0);
+        reservoirTemporal.values[id].weights = vec4(0.0);
+        commonResults.values[id].radiance = vec4(0.0);
+        commonResults.values[id].guideIds.w = 0u;
+    }
+    if (id < pathCapacity) {
+        branchResults.values[id].radiance = vec4(0.0);
+        branchResults.values[id].guideIds.w = 0u;
+        shadowVisibility.values[id] = 0u;
+    }
+    if (id < signalCount) {
+        rawSignals.values[id] = vec4(0.0);
+        albedoValues.values[id] = vec4(1.0);
+        guidesCurrent.values[id].radiance = vec4(0.0);
+        guidesCurrent.values[id].guidePosition = vec4(0.0);
+        guidesCurrent.values[id].guideNormal = vec4(0.0);
+        guidesCurrent.values[id].guideIds = uvec4(0u);
+        guidesCurrent.values[id].albedo = vec4(1.0);
+    }
+    if (id == 0u) {
+        counters.words[0] = pixelCount;
+        counters.words[1] = 0u;
+        counters.words[2] = 0u;
+        counters.words[3] = 0u;
+    }
+}

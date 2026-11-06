@@ -1,0 +1,10 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    counters.words[1] = 0u;
+    counters.words[2] = 0u;
+}

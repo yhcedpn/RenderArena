@@ -1,0 +1,58 @@
+#version 460
+#include "common.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+bool localCompatible(BranchResult center, BranchResult sampleGuide)
+{
+    return (center.guideIds.w & GUIDE_VALID) != 0u &&
+           (sampleGuide.guideIds.w & GUIDE_VALID) != 0u &&
+           center.guideIds.xyz == sampleGuide.guideIds.xyz &&
+           dot(center.guideNormal.xyz, sampleGuide.guideNormal.xyz) >= 0.9;
+}
+
+void main()
+{
+    FrameData frame = frameData();
+    uint index = gl_GlobalInvocationID.x;
+    uint signalCount = frame.counts.x * DOMAIN_COUNT;
+    if (index >= signalCount) {
+        return;
+    }
+    uint domain = index / frame.counts.x;
+    uint pixel = index - domain * frame.counts.x;
+    uvec2 extent = frame.extentFrameFlags.xy;
+    ivec2 coordinate = ivec2(int(pixel % extent.x), int(pixel / extent.x));
+    vec2 moments = historyMomentCurrent.values[index].xy;
+    float variance = max(moments.y - moments.x * moments.x, 0.0);
+    if (historyLengthCurrent.values[index] < 4u) {
+        float sum = 0.0;
+        float sumSquared = 0.0;
+        float weightSum = 0.0;
+        BranchResult centerGuide = guidesCurrent.values[index];
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec2 sampleCoordinate = coordinate + ivec2(x, y);
+                if (any(lessThan(sampleCoordinate, ivec2(0))) ||
+                    any(greaterThanEqual(sampleCoordinate, ivec2(extent)))) {
+                    continue;
+                }
+                uint samplePixel = pixelIndex(uvec2(sampleCoordinate), extent);
+                uint sampleIndex = signalIndex(samplePixel, domain, frame.counts.x);
+                if (!localCompatible(centerGuide, guidesCurrent.values[sampleIndex])) {
+                    continue;
+                }
+                float value = luminance(rawSignals.values[sampleIndex].xyz);
+                float weight = (x == 0 && y == 0) ? 2.0 : 1.0;
+                sum += value * weight;
+                sumSquared += value * value * weight;
+                weightSum += weight;
+            }
+        }
+        if (weightSum > 0.0) {
+            float mean = sum / weightSum;
+            variance = max(sumSquared / weightSum - mean * mean, 0.0);
+        }
+    }
+    atrousA.values[index] = vec4(historyColorCurrent.values[index].xyz, variance);
+}

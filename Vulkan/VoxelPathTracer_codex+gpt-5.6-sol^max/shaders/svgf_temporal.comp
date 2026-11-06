@@ -1,158 +1,65 @@
 #version 460
-#include "common.glsl"
+#include "restir_common.glsl"
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-GuidePixel readPreviousGuides(uint pixel) {
-    return globals.flags.z == 0u ? guidesHistory0[pixel] : guidesHistory1[pixel];
-}
-
-TemporalPixel readPreviousTemporal(uint pixel) {
-    return globals.flags.z == 0u ? temporal0[pixel] : temporal1[pixel];
-}
-
-vec2 projectPixel(mat4 viewProjection, vec3 position, vec2 jitter) {
-    vec4 clip = viewProjection * vec4(position, 1.0);
-    if (clip.w <= 0.0) return vec2(-1.0e10);
-    return (clip.xy / clip.w * 0.5 + 0.5) * vec2(globals.extentCounts.xy) -
-           vec2(0.5) + jitter;
-}
-
-vec3 demodulate(vec3 value, Guide guide) {
-    if (guide.ids.x == 0u || guideTerminalType(guide) != 0u) return value;
-    vec3 result = vec3(0.0);
-    if (guide.albedo.r > 0.0) result.r = value.r / guide.albedo.r;
-    if (guide.albedo.g > 0.0) result.g = value.g / guide.albedo.g;
-    if (guide.albedo.b > 0.0) result.b = value.b / guide.albedo.b;
-    return result;
-}
-
-bool opticalValidation(Guide current, Guide previous, uint domain) {
-    if (!guideCompatible(current, previous, domain)) return false;
-    if (domain == DOMAIN_REFLECT_DIFFUSE || domain == DOMAIN_REFLECT_SPECULAR ||
-        domain == DOMAIN_GLASS_REFLECTION) {
-        float tolerance = 0.04 + 0.01 * max(current.virtualPositionDepth.w,
-                                            previous.virtualPositionDepth.w);
-        if (distance(current.virtualPositionDepth.xyz, previous.virtualPositionDepth.xyz) >
-            tolerance)
-            return false;
-        if (dot(current.virtualNormalDistance.xyz, previous.virtualNormalDistance.xyz) < 0.92)
-            return false;
+void main()
+{
+    FrameData frame = frameData();
+    uint index = gl_GlobalInvocationID.x;
+    uint signalCount = frame.counts.x * DOMAIN_COUNT;
+    if (index >= signalCount) {
+        return;
     }
-    return true;
-}
-
-void localMoments(uint pixel, uint domain, Guide center, out float mean,
-                  out float secondMoment) {
-    ivec2 coordinate = ivec2(int(pixel % globals.extentCounts.x),
-                              int(pixel / globals.extentCounts.x));
-    float sum = 0.0;
-    float sum2 = 0.0;
-    float count = 0.0;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            ivec2 neighbor = coordinate + ivec2(x, y);
-            if (any(lessThan(neighbor, ivec2(0))) ||
-                any(greaterThanEqual(neighbor, ivec2(globals.extentCounts.xy))))
-                continue;
-            uint index = uint(neighbor.y) * globals.extentCounts.x + uint(neighbor.x);
-            Guide neighborGuide = findGuide(guidesCurrent[index], domain);
-            if (center.ids.x != 0u && !guideCompatible(center, neighborGuide, domain)) continue;
-            vec3 value = demodulate(signalsCurrent[index].signal[domain].rgb, neighborGuide);
-            float l = luminance(value);
-            sum += l;
-            sum2 += l * l;
-            count += 1.0;
-        }
+    uint domain = index / frame.counts.x;
+    uint pixel = index - domain * frame.counts.x;
+    uvec2 coordinate = uvec2(pixel % frame.extentFrameFlags.x,
+                             pixel / frame.extentFrameFlags.x);
+    vec3 current = rawSignals.values[index].xyz;
+    BranchResult guide = guidesCurrent.values[index];
+    bool valid = (guide.guideIds.w & GUIDE_VALID) != 0u &&
+                 (frame.extentFrameFlags.w & FRAME_HISTORY_VALID) != 0u &&
+                 (frame.extentFrameFlags.w & FRAME_GLOBAL_RESET) == 0u;
+    if (domain == DOMAIN_TRANSMISSION && (frame.extentFrameFlags.w & FRAME_CAMERA_MOVED) != 0u) {
+        valid = false;
     }
-    if (count > 0.0) {
-        mean = sum / count;
-        secondMoment = sum2 / count;
-    } else {
-        mean = 0.0;
-        secondMoment = 0.0;
-    }
-}
 
-void main() {
-    uint pixel = gl_GlobalInvocationID.x;
-    if (pixel >= pixelCount()) return;
-    TemporalPixel temporalResult;
-    FilterPixel filtered;
-    ivec2 currentCoordinate = ivec2(int(pixel % globals.extentCounts.x),
-                                     int(pixel / globals.extentCounts.x));
-
-    for (uint domain = 0u; domain < DOMAIN_COUNT; ++domain) {
-        Guide currentGuide = findGuide(guidesCurrent[pixel], domain);
-        vec3 currentValue = demodulate(signalsCurrent[pixel].signal[domain].rgb, currentGuide);
-        float currentLuminance = luminance(currentValue);
-        bool validHistory = globals.flags.x == 0u && currentGuide.ids.x != 0u;
-        ivec2 previousCoordinate = currentCoordinate;
-
-        if (validHistory && domain == DOMAIN_GLASS_TRANSMISSION) {
-            if (globals.flags.y != 0u) {
-                validHistory = false;
-            } else {
-                vec2 compensated = vec2(currentCoordinate) +
-                                   globals.jitterCurrentPrevious.zw -
-                                   globals.jitterCurrentPrevious.xy;
-                previousCoordinate = ivec2(round(compensated));
-            }
-        } else if (validHistory) {
-            vec3 motionPosition =
-                (domain == DOMAIN_REFLECT_DIFFUSE || domain == DOMAIN_REFLECT_SPECULAR ||
-                 domain == DOMAIN_GLASS_REFLECTION)
-                    ? currentGuide.virtualPositionDepth.xyz
-                    : currentGuide.positionDepth.xyz;
-            vec2 currentProjected = projectPixel(globals.currentViewProjection, motionPosition,
-                                                 globals.jitterCurrentPrevious.xy);
-            vec2 previousProjected = projectPixel(globals.previousViewProjection, motionPosition,
-                                                  globals.jitterCurrentPrevious.zw);
-            previousCoordinate = ivec2(round(vec2(currentCoordinate) +
-                                             previousProjected - currentProjected));
-        }
-
-        TemporalPixel previousTemporal;
-        Guide previousGuide = emptyGuide();
-        if (validHistory && all(greaterThanEqual(previousCoordinate, ivec2(0))) &&
-            all(lessThan(previousCoordinate, ivec2(globals.extentCounts.xy)))) {
-            uint previousPixel = uint(previousCoordinate.y) * globals.extentCounts.x +
-                                 uint(previousCoordinate.x);
-            previousGuide = findGuide(readPreviousGuides(previousPixel), domain);
-            validHistory = opticalValidation(currentGuide, previousGuide, domain);
-            previousTemporal = readPreviousTemporal(previousPixel);
+    uint previousIndex = 0u;
+    if (valid) {
+        vec2 previousCoordinate;
+        if (domain == DOMAIN_TRANSMISSION) {
+            previousCoordinate = vec2(coordinate) + frame.jitter.xy - frame.jitter.zw;
         } else {
-            validHistory = false;
+            vec2 currentProjection = projectCurrent(guide.guidePosition.xyz);
+            vec2 previousProjection = projectPrevious(guide.guidePosition.xyz);
+            previousCoordinate = vec2(coordinate) + (previousProjection - currentProjection);
         }
-
-        vec3 mean = currentValue;
-        float m1 = currentLuminance;
-        float m2 = currentLuminance * currentLuminance;
-        float historyLength = 1.0;
-        if (validHistory) {
-            float previousLength = previousTemporal.momentsLength[domain].z;
-            historyLength = min(previousLength + 1.0, 32.0);
-            float alpha = max(1.0 / historyLength, 1.0 / 32.0);
-            mean = mix(previousTemporal.meanVariance[domain].rgb, currentValue, alpha);
-            m1 = mix(previousTemporal.momentsLength[domain].x, currentLuminance, alpha);
-            m2 = mix(previousTemporal.momentsLength[domain].y,
-                     currentLuminance * currentLuminance, alpha);
+        ivec2 rounded = ivec2(round(previousCoordinate));
+        if (any(lessThan(rounded, ivec2(0))) ||
+            any(greaterThanEqual(rounded, ivec2(frame.extentFrameFlags.xy)))) {
+            valid = false;
+        } else {
+            uint previousPixel = pixelIndex(uvec2(rounded), frame.extentFrameFlags.xy);
+            previousIndex = signalIndex(previousPixel, domain, frame.counts.x);
+            valid = guideCompatible(guide, guidesPrevious.values[previousIndex]);
         }
-        float variance = max(m2 - m1 * m1, 0.0);
-        if (historyLength < 4.0) {
-            float localMean;
-            float localSecond;
-            localMoments(pixel, domain, currentGuide, localMean, localSecond);
-            variance = max(variance, max(localSecond - localMean * localMean, 0.0));
-        }
-        temporalResult.meanVariance[domain] = vec4(mean, variance);
-        temporalResult.momentsLength[domain] = vec4(m1, m2, historyLength, 0.0);
-        filtered.valueVariance[domain] = vec4(mean, variance);
     }
 
-    if (globals.flags.w == 0u)
-        temporal0[pixel] = temporalResult;
-    else
-        temporal1[pixel] = temporalResult;
-    filterPing[pixel] = filtered;
+    float currentLuminance = luminance(current);
+    if (!valid) {
+        historyColorCurrent.values[index] = vec4(current, 1.0);
+        historyMomentCurrent.values[index] = vec4(currentLuminance,
+                                                  currentLuminance * currentLuminance, 0.0, 0.0);
+        historyLengthCurrent.values[index] = 1u;
+        return;
+    }
+    uint previousLength = min(historyLengthPrevious.values[previousIndex], 31u);
+    uint lengthValue = previousLength + 1u;
+    float alpha = max(1.0 / float(lengthValue), 1.0 / 32.0);
+    vec3 accumulated = mix(historyColorPrevious.values[previousIndex].xyz, current, alpha);
+    vec2 moments = mix(historyMomentPrevious.values[previousIndex].xy,
+                       vec2(currentLuminance, currentLuminance * currentLuminance), alpha);
+    historyColorCurrent.values[index] = vec4(accumulated, 1.0);
+    historyMomentCurrent.values[index] = vec4(moments, 0.0, 0.0);
+    historyLengthCurrent.values[index] = lengthValue;
 }

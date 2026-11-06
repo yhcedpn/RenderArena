@@ -1,0 +1,43 @@
+#version 460
+#include "shading_common.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= counters.words[0]) {
+        return;
+    }
+    PathState path = (pc.passIndex & 1u) == 0u ? pathsA.values[index] : pathsB.values[index];
+    HitRecord hit = hits.values[index];
+    if ((path.meta.w & PATH_INSIDE_GLASS) != 0u && hit.positionT.w > 0.0) {
+        path.throughputEta.xyz *= exp(-materials.values[hit.ids.x].absorptionIor.xyz * hit.positionT.w);
+    }
+    if (hit.positionT.w >= 0.0) {
+        Material material = materials.values[hit.ids.x];
+        uint type = material.typeTexture.x;
+        vec3 normal = hit.normalFront.w > 0.5 ? hit.normalFront.xyz : -hit.normalFront.xyz;
+        float coneWidth = path.directionCone.w * hit.positionT.w;
+        if (type == MATERIAL_EMISSIVE) {
+            vec3 emitted = hit.normalFront.w > 0.5 ? material.emissionRoughness.xyz : vec3(0.0);
+            float weight = 1.0;
+            if ((path.meta.w & PATH_LAST_RESTIR) != 0u &&
+                (path.meta.w & PATH_LAST_DELTA) == 0u) {
+                weight = 0.0;
+            } else if ((path.meta.w & PATH_LAST_DELTA) == 0u && path.radiancePdf.w > 0.0) {
+                weight = powerHeuristic(path.radiancePdf.w, emitterDirectionPdf(hit, path));
+            }
+            path.radiancePdf.xyz += path.throughputEta.xyz * emitted * weight;
+            establishTerminal(path, hit, normal, vec3(1.0), 0.0, false);
+        } else if (type == MATERIAL_DIFFUSE || type == MATERIAL_ROUGH_METAL) {
+            vec3 albedo = sampleBaseColor(hit.ids.x, hit.uvCone.xy, coneWidth);
+            float roughness = type == MATERIAL_ROUGH_METAL
+                                  ? sampleRoughness(hit.ids.x, hit.uvCone.xy, coneWidth)
+                                  : 1.0;
+            establishTerminal(path, hit, normal, albedo, roughness,
+                              type == MATERIAL_ROUGH_METAL);
+        }
+    }
+    writeBranchResult(path);
+}

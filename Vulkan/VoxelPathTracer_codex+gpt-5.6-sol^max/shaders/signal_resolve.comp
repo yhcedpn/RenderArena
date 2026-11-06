@@ -1,0 +1,74 @@
+#version 460
+#include "restir_common.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+vec3 demodulate(vec3 value, vec3 albedo)
+{
+    return vec3(albedo.x > 0.0 ? value.x / albedo.x : 0.0,
+                albedo.y > 0.0 ? value.y / albedo.y : 0.0,
+                albedo.z > 0.0 ? value.z / albedo.z : 0.0);
+}
+
+void addSignal(uint pixel, uint domain, vec3 radiance, BranchResult guide)
+{
+    FrameData frame = frameData();
+    uint index = signalIndex(pixel, domain, frame.counts.x);
+    bool diffuse = (guide.guideIds.w & GUIDE_DIFFUSE) != 0u;
+    vec3 albedo = diffuse ? guide.albedo.xyz : vec3(1.0);
+    rawSignals.values[index].xyz += diffuse ? demodulate(radiance, albedo) : radiance;
+    rawSignals.values[index].w = 1.0;
+    albedoValues.values[index] = vec4(albedo, 1.0);
+    if ((guide.guideIds.w & GUIDE_VALID) != 0u) {
+        guidesCurrent.values[index] = guide;
+    }
+}
+
+void main()
+{
+    FrameData frame = frameData();
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= frame.counts.x) {
+        return;
+    }
+    HitRecord primaryHit = hits.values[pixel];
+    BranchResult primaryGuide;
+    primaryGuide.guideIds.w = 0u;
+    uint primaryDomainValue = INVALID_DOMAIN;
+    if (primaryHit.positionT.w >= 0.0) {
+        uint type = materials.values[primaryHit.ids.x].typeTexture.x;
+        if (type == MATERIAL_DIFFUSE || type == MATERIAL_ROUGH_METAL) {
+            primaryDomainValue = primaryDomain(primaryHit.ids.x);
+            primaryGuide = guidesCurrent.values[signalIndex(pixel, primaryDomainValue, frame.counts.x)];
+            if (restirDirect.values[pixel].w > 0.0) {
+                addSignal(pixel, primaryDomainValue, restirDirect.values[pixel].xyz, primaryGuide);
+            }
+        }
+    }
+
+    BranchResult commonValue = commonResults.values[pixel];
+    if (commonValue.radiance.w > 0.0) {
+        uint domain = commonValue.guideIds.z;
+        if (domain == DOMAIN_OPAQUE_DIFFUSE || domain == DOMAIN_OPAQUE_SPECULAR) {
+            addSignal(pixel, domain, commonValue.radiance.xyz, primaryGuide);
+        } else if (domain < DOMAIN_COUNT) {
+            addSignal(pixel, domain, commonValue.radiance.xyz, commonValue);
+        }
+    }
+
+    for (uint branch = 0u; branch < 2u; ++branch) {
+        BranchResult result = branchResults.values[pixel * 2u + branch];
+        if (result.radiance.w == 0.0) {
+            continue;
+        }
+        uint domain = (result.guideIds.w >> 8u) & 0xffu;
+        if (domain >= DOMAIN_COUNT) {
+            continue;
+        }
+        if (domain == DOMAIN_OPAQUE_DIFFUSE || domain == DOMAIN_OPAQUE_SPECULAR) {
+            addSignal(pixel, domain, result.radiance.xyz, primaryGuide);
+        } else {
+            addSignal(pixel, domain, result.radiance.xyz, result);
+        }
+    }
+}

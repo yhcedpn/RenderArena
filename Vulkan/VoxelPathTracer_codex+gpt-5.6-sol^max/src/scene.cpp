@@ -2,327 +2,385 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
+#include <numeric>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
-namespace vpt {
+namespace arena {
 namespace {
 
-constexpr std::array<int, 3> kDimensions{16, 8, 16};
-constexpr int kMinY = -1;
+constexpr std::array<std::int32_t, 3> dimensions{16, 8, 16};
+constexpr std::int32_t emptyVoxel = -1;
 
-struct Quad {
-    std::array<Vec3, 4> positions{};
-    Vec3 normal{};
-    std::uint32_t material{};
-    std::uint32_t surface{};
+struct MaskCell {
+    std::int32_t material{emptyVoxel};
+    std::int32_t sign{};
+
+    [[nodiscard]] bool operator==(const MaskCell&) const noexcept = default;
 };
 
-std::size_t cellIndex(int x, int yIndex, int z) {
-    return (static_cast<std::size_t>(yIndex) * kDimensions[2] +
-            static_cast<std::size_t>(z)) *
-               kDimensions[0] +
-           static_cast<std::size_t>(x);
+struct Quad {
+    std::uint32_t material{};
+    std::uint32_t surface{};
+    std::array<Vec3, 4> positions{};
+    std::array<Vec2, 4> uvs{};
+    Vec3 normal{};
+};
+
+[[nodiscard]] std::size_t voxelOffset(const std::int32_t x, const std::int32_t yIndex,
+                                      const std::int32_t z) noexcept
+{
+    return static_cast<std::size_t>(z * dimensions[0] * dimensions[1] +
+                                    yIndex * dimensions[0] + x);
 }
 
-Vec3 gridPoint(const std::array<float, 3>& point) {
-    return {point[0], point[1] + static_cast<float>(kMinY), point[2]};
-}
-
-void addQuad(std::vector<Quad>& quads, int axis, int sign, float plane, float u0, float v0,
-             float u1, float v1, std::uint32_t material, std::uint32_t& nextSurface) {
-    const int uAxis = (axis + 1) % 3;
-    const int vAxis = (axis + 2) % 3;
-    std::array<float, 3> a{};
-    std::array<float, 3> b{};
-    std::array<float, 3> c{};
-    std::array<float, 3> d{};
-    a[axis] = b[axis] = c[axis] = d[axis] = plane;
-    a[uAxis] = u0;
-    a[vAxis] = v0;
-    b[uAxis] = u1;
-    b[vAxis] = v0;
-    c[uAxis] = u1;
-    c[vAxis] = v1;
-    d[uAxis] = u0;
-    d[vAxis] = v1;
-
-    Quad quad{};
-    quad.material = material;
-    quad.surface = nextSurface++;
-    if (sign > 0) {
-        quad.positions = {gridPoint(a), gridPoint(b), gridPoint(c), gridPoint(d)};
-    } else {
-        quad.positions = {gridPoint(a), gridPoint(d), gridPoint(c), gridPoint(b)};
+[[nodiscard]] std::int32_t getVoxel(const std::vector<std::int32_t>& voxels,
+                                    const std::array<std::int32_t, 3>& coordinate) noexcept
+{
+    if (coordinate[0] < 0 || coordinate[0] >= dimensions[0] || coordinate[1] < 0 ||
+        coordinate[1] >= dimensions[1] || coordinate[2] < 0 || coordinate[2] >= dimensions[2]) {
+        return emptyVoxel;
     }
-    float* normalComponent = axis == 0 ? &quad.normal.x : (axis == 1 ? &quad.normal.y : &quad.normal.z);
-    *normalComponent = static_cast<float>(sign);
+    return voxels[voxelOffset(coordinate[0], coordinate[1], coordinate[2])];
+}
+
+void putVoxel(std::vector<std::int32_t>& voxels, const std::int32_t x, const std::int32_t y,
+              const std::int32_t z, const std::uint32_t material)
+{
+    const std::int32_t yIndex = y + 1;
+    if (x < 0 || x >= dimensions[0] || yIndex < 0 || yIndex >= dimensions[1] || z < 0 ||
+        z >= dimensions[2]) {
+        throw Error("场景体素坐标越界");
+    }
+    voxels[voxelOffset(x, yIndex, z)] = static_cast<std::int32_t>(material);
+}
+
+[[nodiscard]] Vec3 gridToWorld(const std::array<std::int32_t, 3>& point) noexcept
+{
+    return {static_cast<float>(point[0]), static_cast<float>(point[1] - 1),
+            static_cast<float>(point[2])};
+}
+
+[[nodiscard]] std::uint32_t hashSurface(const std::uint32_t axis, const std::int32_t plane,
+                                        const std::int32_t sign, const std::uint32_t material,
+                                        const std::int32_t u, const std::int32_t v,
+                                        const std::int32_t width, const std::int32_t height) noexcept
+{
+    std::uint32_t hash = 2166136261U;
+    const auto mix = [&hash](const std::uint32_t value) {
+        hash ^= value;
+        hash *= 16777619U;
+    };
+    mix(axis);
+    mix(static_cast<std::uint32_t>(plane));
+    mix(static_cast<std::uint32_t>(sign));
+    mix(material);
+    mix(static_cast<std::uint32_t>(u));
+    mix(static_cast<std::uint32_t>(v));
+    mix(static_cast<std::uint32_t>(width));
+    mix(static_cast<std::uint32_t>(height));
+    return hash == 0U ? 1U : hash;
+}
+
+void appendGreedyQuads(const std::vector<std::int32_t>& voxels, std::vector<Quad>& quads)
+{
+    for (std::uint32_t axis = 0; axis < 3U; ++axis) {
+        const std::uint32_t uAxis = (axis + 1U) % 3U;
+        const std::uint32_t vAxis = (axis + 2U) % 3U;
+        const std::int32_t uSize = dimensions[uAxis];
+        const std::int32_t vSize = dimensions[vAxis];
+        std::vector<MaskCell> mask(static_cast<std::size_t>(uSize * vSize));
+
+        for (std::int32_t plane = 0; plane <= dimensions[axis]; ++plane) {
+            for (std::int32_t v = 0; v < vSize; ++v) {
+                for (std::int32_t u = 0; u < uSize; ++u) {
+                    std::array<std::int32_t, 3> before{};
+                    std::array<std::int32_t, 3> after{};
+                    before[axis] = plane - 1;
+                    after[axis] = plane;
+                    before[uAxis] = after[uAxis] = u;
+                    before[vAxis] = after[vAxis] = v;
+                    const std::int32_t a = getVoxel(voxels, before);
+                    const std::int32_t b = getVoxel(voxels, after);
+                    MaskCell cell;
+                    if (a != emptyVoxel && b == emptyVoxel) {
+                        cell = {a, 1};
+                    } else if (a == emptyVoxel && b != emptyVoxel) {
+                        cell = {b, -1};
+                    }
+                    mask[static_cast<std::size_t>(v * uSize + u)] = cell;
+                }
+            }
+
+            for (std::int32_t v = 0; v < vSize; ++v) {
+                for (std::int32_t u = 0; u < uSize;) {
+                    const std::size_t offset = static_cast<std::size_t>(v * uSize + u);
+                    const MaskCell cell = mask[offset];
+                    if (cell.material == emptyVoxel) {
+                        ++u;
+                        continue;
+                    }
+
+                    std::int32_t width = 1;
+                    while (u + width < uSize &&
+                           mask[static_cast<std::size_t>(v * uSize + u + width)] == cell) {
+                        ++width;
+                    }
+                    std::int32_t height = 1;
+                    bool canExtend = true;
+                    while (v + height < vSize && canExtend) {
+                        for (std::int32_t x = 0; x < width; ++x) {
+                            if (!(mask[static_cast<std::size_t>((v + height) * uSize + u + x)] == cell)) {
+                                canExtend = false;
+                                break;
+                            }
+                        }
+                        if (canExtend) {
+                            ++height;
+                        }
+                    }
+
+                    std::array<std::int32_t, 3> base{};
+                    std::array<std::int32_t, 3> du{};
+                    std::array<std::int32_t, 3> dv{};
+                    base[axis] = plane;
+                    base[uAxis] = u;
+                    base[vAxis] = v;
+                    du[uAxis] = width;
+                    dv[vAxis] = height;
+                    const auto add = [](const std::array<std::int32_t, 3>& lhs,
+                                        const std::array<std::int32_t, 3>& rhs) {
+                        return std::array<std::int32_t, 3>{lhs[0] + rhs[0], lhs[1] + rhs[1],
+                                                          lhs[2] + rhs[2]};
+                    };
+                    const auto baseDu = add(base, du);
+                    const auto baseDv = add(base, dv);
+                    const auto baseDuDv = add(baseDu, dv);
+
+                    Quad quad;
+                    quad.material = static_cast<std::uint32_t>(cell.material);
+                    quad.surface = hashSurface(axis, plane, cell.sign, quad.material, u, v, width, height);
+                    quad.normal = {};
+                    if (axis == 0U) {
+                        quad.normal.x = static_cast<float>(cell.sign);
+                    } else if (axis == 1U) {
+                        quad.normal.y = static_cast<float>(cell.sign);
+                    } else {
+                        quad.normal.z = static_cast<float>(cell.sign);
+                    }
+                    if (cell.sign > 0) {
+                        quad.positions = {gridToWorld(base), gridToWorld(baseDu), gridToWorld(baseDuDv),
+                                          gridToWorld(baseDv)};
+                    } else {
+                        quad.positions = {gridToWorld(base), gridToWorld(baseDv), gridToWorld(baseDuDv),
+                                          gridToWorld(baseDu)};
+                    }
+                    quad.uvs = {Vec2{0.0F, 0.0F}, Vec2{static_cast<float>(width), 0.0F},
+                                Vec2{static_cast<float>(width), static_cast<float>(height)},
+                                Vec2{0.0F, static_cast<float>(height)}};
+                    quads.push_back(quad);
+
+                    for (std::int32_t y = 0; y < height; ++y) {
+                        for (std::int32_t x = 0; x < width; ++x) {
+                            mask[static_cast<std::size_t>((v + y) * uSize + u + x)] = {};
+                        }
+                    }
+                    u += width;
+                }
+            }
+        }
+    }
+}
+
+void appendBoxQuad(std::vector<Quad>& quads, const std::uint32_t material,
+                   const std::uint32_t surface, const Vec3 normal,
+                   const std::array<Vec3, 4>& positions, const float width, const float height)
+{
+    Quad quad;
+    quad.material = material;
+    quad.surface = surface;
+    quad.positions = positions;
+    quad.uvs = {Vec2{0.0F, 0.0F}, Vec2{width, 0.0F}, Vec2{width, height}, Vec2{0.0F, height}};
+    quad.normal = normal;
     quads.push_back(quad);
 }
 
-void greedyOpaqueMesh(const std::vector<std::int32_t>& cells, std::vector<Quad>& quads,
-                      std::uint32_t& nextSurface) {
-    for (int axis = 0; axis < 3; ++axis) {
-        const int uAxis = (axis + 1) % 3;
-        const int vAxis = (axis + 2) % 3;
-        const int width = kDimensions[uAxis];
-        const int height = kDimensions[vAxis];
-        for (int sign : {-1, 1}) {
-            for (int slice = 0; slice < kDimensions[axis]; ++slice) {
-                std::vector<std::int32_t> mask(static_cast<std::size_t>(width * height), -1);
-                for (int v = 0; v < height; ++v) {
-                    for (int u = 0; u < width; ++u) {
-                        std::array<int, 3> cell{};
-                        cell[axis] = slice;
-                        cell[uAxis] = u;
-                        cell[vAxis] = v;
-                        const std::int32_t material = cells[cellIndex(cell[0], cell[1], cell[2])];
-                        if (material < 0) continue;
-                        std::array<int, 3> neighbor = cell;
-                        neighbor[axis] += sign;
-                        bool neighborFilled = false;
-                        if (neighbor[axis] >= 0 && neighbor[axis] < kDimensions[axis]) {
-                            neighborFilled = cells[cellIndex(neighbor[0], neighbor[1], neighbor[2])] >= 0;
-                        }
-                        if (!neighborFilled) {
-                            mask[static_cast<std::size_t>(v * width + u)] = material;
-                        }
-                    }
-                }
-
-                // Deterministic row-major greedy expansion. Width is maximized first,
-                // then height is extended while every cell of the complete edge matches.
-                for (int v = 0; v < height; ++v) {
-                    for (int u = 0; u < width;) {
-                        const std::int32_t material = mask[static_cast<std::size_t>(v * width + u)];
-                        if (material < 0) {
-                            ++u;
-                            continue;
-                        }
-                        int rectangleWidth = 1;
-                        while (u + rectangleWidth < width &&
-                               mask[static_cast<std::size_t>(v * width + u + rectangleWidth)] ==
-                                   material) {
-                            ++rectangleWidth;
-                        }
-                        int rectangleHeight = 1;
-                        bool canExtend = true;
-                        while (v + rectangleHeight < height && canExtend) {
-                            for (int x = 0; x < rectangleWidth; ++x) {
-                                if (mask[static_cast<std::size_t>((v + rectangleHeight) * width +
-                                                                 u + x)] != material) {
-                                    canExtend = false;
-                                    break;
-                                }
-                            }
-                            if (canExtend) ++rectangleHeight;
-                        }
-                        for (int y = 0; y < rectangleHeight; ++y) {
-                            for (int x = 0; x < rectangleWidth; ++x) {
-                                mask[static_cast<std::size_t>((v + y) * width + u + x)] = -1;
-                            }
-                        }
-                        const float plane = static_cast<float>(slice + (sign > 0 ? 1 : 0));
-                        addQuad(quads, axis, sign, plane, static_cast<float>(u),
-                                static_cast<float>(v), static_cast<float>(u + rectangleWidth),
-                                static_cast<float>(v + rectangleHeight),
-                                static_cast<std::uint32_t>(material), nextSurface);
-                        u += rectangleWidth;
-                    }
-                }
-            }
-        }
-    }
+void appendGlassBox(std::vector<Quad>& quads, const std::uint32_t material)
+{
+    constexpr float x0 = 7.0F;
+    constexpr float x1 = 9.0F;
+    constexpr float y0 = 0.125F;
+    constexpr float y1 = 2.125F;
+    constexpr float z0 = 7.0F;
+    constexpr float z1 = 9.0F;
+    const std::uint32_t seed = fnv1a("glass-box");
+    appendBoxQuad(quads, material, seed ^ 1U, {-1.0F, 0.0F, 0.0F},
+                  {{{x0, y0, z0}, {x0, y0, z1}, {x0, y1, z1}, {x0, y1, z0}}}, 2.0F, 2.0F);
+    appendBoxQuad(quads, material, seed ^ 2U, {1.0F, 0.0F, 0.0F},
+                  {{{x1, y0, z1}, {x1, y0, z0}, {x1, y1, z0}, {x1, y1, z1}}}, 2.0F, 2.0F);
+    appendBoxQuad(quads, material, seed ^ 3U, {0.0F, -1.0F, 0.0F},
+                  {{{x0, y0, z1}, {x0, y0, z0}, {x1, y0, z0}, {x1, y0, z1}}}, 2.0F, 2.0F);
+    appendBoxQuad(quads, material, seed ^ 4U, {0.0F, 1.0F, 0.0F},
+                  {{{x0, y1, z0}, {x0, y1, z1}, {x1, y1, z1}, {x1, y1, z0}}}, 2.0F, 2.0F);
+    appendBoxQuad(quads, material, seed ^ 5U, {0.0F, 0.0F, -1.0F},
+                  {{{x1, y0, z0}, {x0, y0, z0}, {x0, y1, z0}, {x1, y1, z0}}}, 2.0F, 2.0F);
+    appendBoxQuad(quads, material, seed ^ 6U, {0.0F, 0.0F, 1.0F},
+                  {{{x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}}, 2.0F, 2.0F);
 }
 
-void addGlassBox(std::vector<Quad>& quads, std::uint32_t material,
-                 std::uint32_t& nextSurface) {
-    // addQuad applies kMinY to its Y coordinate. Supply Y values as grid-space
-    // coordinates so the resulting bounds are exactly [0.125, 2.125].
-    constexpr float minX = 7.0F;
-    constexpr float maxX = 9.0F;
-    constexpr float minYGrid = 1.125F;
-    constexpr float maxYGrid = 3.125F;
-    constexpr float minZ = 7.0F;
-    constexpr float maxZ = 9.0F;
-    // axis X => (u,v)=(Y,Z)
-    addQuad(quads, 0, -1, minX, minYGrid, minZ, maxYGrid, maxZ, material, nextSurface);
-    addQuad(quads, 0, 1, maxX, minYGrid, minZ, maxYGrid, maxZ, material, nextSurface);
-    // axis Y => (u,v)=(Z,X)
-    addQuad(quads, 1, -1, minYGrid, minZ, minX, maxZ, maxX, material, nextSurface);
-    addQuad(quads, 1, 1, maxYGrid, minZ, minX, maxZ, maxX, material, nextSurface);
-    // axis Z => (u,v)=(X,Y)
-    addQuad(quads, 2, -1, minZ, minX, minYGrid, maxX, maxYGrid, material, nextSurface);
-    addQuad(quads, 2, 1, maxZ, minX, minYGrid, maxX, maxYGrid, material, nextSurface);
+[[nodiscard]] float luminance(const std::array<float, 3>& value) noexcept
+{
+    return 0.2126F * value[0] + 0.7152F * value[1] + 0.0722F * value[2];
 }
-
-float floatFromUint(std::uint32_t value) { return std::bit_cast<float>(value); }
 
 } // namespace
 
-SceneData buildScene(const MaterialSet& materials) {
-    const std::uint32_t stone = materials.require("stone");
-    const std::uint32_t wood = materials.require("wood");
-    const std::uint32_t red = materials.require("red");
-    const std::uint32_t blue = materials.require("blue");
-    const std::uint32_t roughMetal = materials.require("rough_metal");
-    const std::uint32_t mirror = materials.require("mirror");
-    const std::uint32_t glass = materials.require("glass");
-    const std::uint32_t glow = materials.require("glow");
+SceneMesh buildShowroom(const MaterialLibrary& materials)
+{
+    const std::uint32_t stone = materials.indexOf("stone");
+    const std::uint32_t wood = materials.indexOf("wood");
+    const std::uint32_t red = materials.indexOf("red");
+    const std::uint32_t blue = materials.indexOf("blue");
+    const std::uint32_t roughMetal = materials.indexOf("rough_metal");
+    const std::uint32_t mirror = materials.indexOf("mirror");
+    const std::uint32_t glass = materials.indexOf("glass");
+    const std::uint32_t glow = materials.indexOf("glow");
 
-    std::vector<std::int32_t> cells(
-        static_cast<std::size_t>(kDimensions[0] * kDimensions[1] * kDimensions[2]), -1);
-    auto setCell = [&](int x, int y, int z, std::uint32_t material) {
-        const int yi = y - kMinY;
-        if (x < 0 || x >= kDimensions[0] || yi < 0 || yi >= kDimensions[1] || z < 0 ||
-            z >= kDimensions[2]) {
-            throw std::runtime_error("内部场景坐标越界");
-        }
-        cells[cellIndex(x, yi, z)] = static_cast<std::int32_t>(material);
-    };
-
-    for (int x = 0; x <= 15; ++x)
-        for (int z = 0; z <= 15; ++z) setCell(x, -1, z, stone);
-    for (int y = 0; y <= 5; ++y)
-        for (int z = 0; z <= 15; ++z) setCell(0, y, z, red);
-    for (int y = 0; y <= 5; ++y)
-        for (int z = 0; z <= 15; ++z) setCell(15, y, z, blue);
-    for (int x = 1; x <= 14; ++x)
-        for (int y = 0; y <= 5; ++y) setCell(x, y, 0, stone);
-    for (int x = 0; x <= 15; ++x) {
-        for (int z = 0; z <= 15; ++z) {
-            if (!(x >= 6 && x <= 9 && z >= 6 && z <= 9)) setCell(x, 6, z, stone);
+    std::vector<std::int32_t> voxels(static_cast<std::size_t>(dimensions[0] * dimensions[1] *
+                                                              dimensions[2]),
+                                     emptyVoxel);
+    for (std::int32_t x = 0; x <= 15; ++x) {
+        for (std::int32_t z = 0; z <= 15; ++z) {
+            putVoxel(voxels, x, -1, z, stone);
         }
     }
-    for (int x = 5; x <= 10; ++x)
-        for (int y = 1; y <= 4; ++y) setCell(x, y, 1, mirror);
-    for (int y = 1; y <= 4; ++y)
-        for (int z = 4; z <= 7; ++z) setCell(1, y, z, mirror);
-    for (int y = 0; y <= 2; ++y) setCell(3, y, 5, red);
-    for (int y = 0; y <= 2; ++y) setCell(12, y, 6, blue);
-    setCell(4, 0, 10, wood);
-    setCell(4, 1, 10, wood);
-    setCell(5, 0, 10, wood);
-    setCell(10, 0, 10, roughMetal);
-    setCell(10, 1, 10, roughMetal);
-    setCell(4, 5, 4, glow);
-    setCell(11, 5, 4, glow);
-    setCell(4, 5, 11, glow);
-    setCell(11, 5, 11, glow);
+    for (std::int32_t y = 0; y <= 5; ++y) {
+        for (std::int32_t z = 0; z <= 15; ++z) {
+            putVoxel(voxels, 0, y, z, red);
+            putVoxel(voxels, 15, y, z, blue);
+        }
+        for (std::int32_t x = 1; x <= 14; ++x) {
+            putVoxel(voxels, x, y, 0, stone);
+        }
+    }
+    for (std::int32_t x = 0; x <= 15; ++x) {
+        for (std::int32_t z = 0; z <= 15; ++z) {
+            if (!(x >= 6 && x <= 9 && z >= 6 && z <= 9)) {
+                putVoxel(voxels, x, 6, z, stone);
+            }
+        }
+    }
+    for (std::int32_t x = 5; x <= 10; ++x) {
+        for (std::int32_t y = 1; y <= 4; ++y) {
+            putVoxel(voxels, x, y, 1, mirror);
+        }
+    }
+    for (std::int32_t y = 1; y <= 4; ++y) {
+        for (std::int32_t z = 4; z <= 7; ++z) {
+            putVoxel(voxels, 1, y, z, mirror);
+        }
+    }
+    for (std::int32_t y = 0; y <= 2; ++y) {
+        putVoxel(voxels, 3, y, 5, red);
+        putVoxel(voxels, 12, y, 6, blue);
+    }
+    putVoxel(voxels, 4, 0, 10, wood);
+    putVoxel(voxels, 4, 1, 10, wood);
+    putVoxel(voxels, 5, 0, 10, wood);
+    putVoxel(voxels, 10, 0, 10, roughMetal);
+    putVoxel(voxels, 10, 1, 10, roughMetal);
+    putVoxel(voxels, 4, 5, 4, glow);
+    putVoxel(voxels, 11, 5, 4, glow);
+    putVoxel(voxels, 4, 5, 11, glow);
+    putVoxel(voxels, 11, 5, 11, glow);
 
     std::vector<Quad> quads;
-    std::uint32_t nextSurface = 1;
-    greedyOpaqueMesh(cells, quads, nextSurface);
-    addGlassBox(quads, glass, nextSurface);
+    appendGreedyQuads(voxels, quads);
+    const std::uint32_t greedyCount = static_cast<std::uint32_t>(quads.size());
+    appendGlassBox(quads, glass);
+    std::stable_sort(quads.begin(), quads.end(), [](const Quad& lhs, const Quad& rhs) {
+        return lhs.material < rhs.material;
+    });
 
-    SceneData result{};
-    result.gpuMaterials.reserve(materials.materials.size());
-    for (const Material& material : materials.materials) {
-        GpuMaterial gpu{};
-        gpu.baseColor = {material.baseColorSrgb.x, material.baseColorSrgb.y,
-                         material.baseColorSrgb.z, 0.0F};
-        gpu.emission = {material.emission.x, material.emission.y, material.emission.z, 0.0F};
-        gpu.absorption = {material.absorption.x, material.absorption.y, material.absorption.z,
-                          0.0F};
-        gpu.params = {floatFromUint(static_cast<std::uint32_t>(material.type)),
-                      material.metallic, material.roughness, material.ior};
-        result.gpuMaterials.push_back(gpu);
-    }
-
-    std::uint32_t triangleId = 0;
-    for (std::uint32_t materialIndex = 0;
-         materialIndex < static_cast<std::uint32_t>(materials.materials.size()); ++materialIndex) {
-        GeometryGroup group{};
-        group.material = materialIndex;
-        group.firstVertex = static_cast<std::uint32_t>(result.vertices.size());
-        group.firstIndex = static_cast<std::uint32_t>(result.indices.size());
-        group.triangleBase = static_cast<std::uint32_t>(result.triangles.size());
-        for (const Quad& quad : quads) {
-            if (quad.material != materialIndex) continue;
-            const std::uint32_t first = static_cast<std::uint32_t>(result.vertices.size());
-            const int axis = std::abs(quad.normal.x) > 0.5F ? 0
-                             : std::abs(quad.normal.y) > 0.5F ? 1
-                                                               : 2;
-            const int uAxis = (axis + 1) % 3;
-            const int vAxis = (axis + 2) % 3;
-            auto component = [](Vec3 p, int a) { return a == 0 ? p.x : (a == 1 ? p.y : p.z); };
-            for (const Vec3 position : quad.positions) {
-                GpuVertex vertex{};
-                vertex.positionU = {position.x, position.y, position.z,
-                                    component(position, uAxis)};
-                vertex.normalV = {quad.normal.x, quad.normal.y, quad.normal.z,
-                                  component(position, vAxis)};
-                result.vertices.push_back(vertex);
-            }
-            constexpr std::array<std::uint32_t, 6> localIndices{0, 1, 2, 0, 2, 3};
-            for (std::uint32_t local : localIndices) result.indices.push_back(first + local);
-            for (std::uint32_t triangle = 0; triangle < 2U; ++triangle) {
-                GpuTriangle gpuTriangle{};
-                gpuTriangle.indicesMaterial = {
-                    first + localIndices[triangle * 3U], first + localIndices[triangle * 3U + 1U],
-                    first + localIndices[triangle * 3U + 2U], materialIndex};
-                gpuTriangle.identity = {quad.surface, triangleId, 0U, 0U};
-                result.triangles.push_back(gpuTriangle);
-                ++triangleId;
-            }
+    SceneMesh mesh;
+    mesh.greedyRectangleCount = greedyCount;
+    std::uint32_t activeMaterial = std::numeric_limits<std::uint32_t>::max();
+    for (const Quad& quad : quads) {
+        if (quad.material != activeMaterial) {
+            activeMaterial = quad.material;
+            mesh.groups.push_back({activeMaterial, static_cast<std::uint32_t>(mesh.triangles.size()), 0U});
         }
-        group.vertexCount = static_cast<std::uint32_t>(result.vertices.size()) - group.firstVertex;
-        group.indexCount = static_cast<std::uint32_t>(result.indices.size()) - group.firstIndex;
-        if (group.indexCount > 0U) result.groups.push_back(group);
+        const std::uint32_t vertexBase = static_cast<std::uint32_t>(mesh.vertices.size());
+        for (std::size_t vertex = 0; vertex < 4U; ++vertex) {
+            mesh.vertices.push_back({{quad.positions[vertex].x, quad.positions[vertex].y,
+                                      quad.positions[vertex].z, 1.0F},
+                                     {quad.normal.x, quad.normal.y, quad.normal.z, 0.0F},
+                                     {quad.uvs[vertex].x, quad.uvs[vertex].y, 0.0F, 0.0F}});
+        }
+        mesh.indices.insert(mesh.indices.end(), {vertexBase, vertexBase + 1U, vertexBase + 2U,
+                                                 vertexBase, vertexBase + 2U, vertexBase + 3U});
+        std::uint32_t flags = 0U;
+        const MaterialType type = materials.at(quad.material).type;
+        if (type == MaterialType::dielectric) {
+            flags |= 1U;
+        }
+        if (type == MaterialType::emissive) {
+            flags |= 2U;
+        }
+        mesh.triangles.push_back({{quad.material, quad.surface, flags, 0U}});
+        mesh.triangles.push_back({{quad.material, quad.surface, flags, 0U}});
+        mesh.groups.back().triangleCount += 2U;
     }
 
-    struct PendingLight {
-        GpuLight light{};
-        float power{};
-    };
-    std::vector<PendingLight> pending;
-    for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(result.triangles.size()); ++i) {
-        const GpuTriangle& triangle = result.triangles[i];
-        const std::uint32_t materialIndex = triangle.indicesMaterial[3];
-        const Material& material = materials.materials[materialIndex];
-        if (material.type != MaterialType::Emissive) continue;
-        const Vec3 p0{result.vertices[triangle.indicesMaterial[0]].positionU[0],
-                      result.vertices[triangle.indicesMaterial[0]].positionU[1],
-                      result.vertices[triangle.indicesMaterial[0]].positionU[2]};
-        const Vec3 p1{result.vertices[triangle.indicesMaterial[1]].positionU[0],
-                      result.vertices[triangle.indicesMaterial[1]].positionU[1],
-                      result.vertices[triangle.indicesMaterial[1]].positionU[2]};
-        const Vec3 p2{result.vertices[triangle.indicesMaterial[2]].positionU[0],
-                      result.vertices[triangle.indicesMaterial[2]].positionU[1],
-                      result.vertices[triangle.indicesMaterial[2]].positionU[2]};
-        const Vec3 crossValue = cross(p1 - p0, p2 - p0);
-        const float area = 0.5F * length(crossValue);
-        const Vec3 normal = normalize(crossValue);
-        PendingLight item{};
-        item.light.p0Area = {p0.x, p0.y, p0.z, area};
-        item.light.p1Cdf = {p1.x, p1.y, p1.z, 0.0F};
-        item.light.p2SelectionPdf = {p2.x, p2.y, p2.z, 0.0F};
-        item.light.normalMaterial = {normal.x, normal.y, normal.z,
-                                     floatFromUint(materialIndex)};
-        item.power = area * luminance(material.emission);
-        if (item.power > 0.0F) pending.push_back(item);
-    }
+    std::vector<float> powers;
+    powers.reserve(mesh.triangles.size());
     float totalPower = 0.0F;
-    for (const PendingLight& item : pending) totalPower += item.power;
-    if (pending.empty() || totalPower <= 0.0F) {
-        throw std::runtime_error("场景没有可采样的暴露发光三角形");
+    for (std::uint32_t triangleIndex = 0; triangleIndex < mesh.triangles.size(); ++triangleIndex) {
+        GpuTriangle& triangle = mesh.triangles[triangleIndex];
+        if ((triangle.data[2] & 2U) == 0U) {
+            continue;
+        }
+        const std::uint32_t i0 = mesh.indices[static_cast<std::size_t>(triangleIndex) * 3U];
+        const std::uint32_t i1 = mesh.indices[static_cast<std::size_t>(triangleIndex) * 3U + 1U];
+        const std::uint32_t i2 = mesh.indices[static_cast<std::size_t>(triangleIndex) * 3U + 2U];
+        const Vec3 a{mesh.vertices[i0].position[0], mesh.vertices[i0].position[1],
+                     mesh.vertices[i0].position[2]};
+        const Vec3 b{mesh.vertices[i1].position[0], mesh.vertices[i1].position[1],
+                     mesh.vertices[i1].position[2]};
+        const Vec3 c{mesh.vertices[i2].position[0], mesh.vertices[i2].position[1],
+                     mesh.vertices[i2].position[2]};
+        const float area = 0.5F * length(cross(b - a, c - a));
+        const Material& material = materials.at(triangle.data[0]);
+        const float power = area * luminance(material.emission);
+        if (!(power > 0.0F)) {
+            throw Error("暴露发光三角形的功率必须大于零");
+        }
+        totalPower += power;
+        powers.push_back(power);
+        mesh.lights.push_back({{a.x, a.y, a.z, area},
+                               {b.x, b.y, b.z, totalPower},
+                               {c.x, c.y, c.z, power},
+                               {triangleIndex, triangle.data[0], triangle.data[1], 0U}});
+        triangle.data[3] = static_cast<std::uint32_t>(mesh.lights.size());
     }
-    float cumulative = 0.0F;
-    result.lights.reserve(pending.size());
-    for (PendingLight& item : pending) {
-        const float probability = item.power / totalPower;
-        cumulative += probability;
-        item.light.p1Cdf[3] = cumulative;
-        item.light.p2SelectionPdf[3] = probability;
-        result.lights.push_back(item.light);
+    if (mesh.lights.empty() || !(totalPower > 0.0F)) {
+        throw Error("场景没有有效暴露发光三角形");
     }
-    result.lights.back().p1Cdf[3] = 1.0F;
-    return result;
+    for (GpuLight& light : mesh.lights) {
+        light.bCdf[3] /= totalPower;
+        light.cProbability[3] /= totalPower;
+    }
+
+    return mesh;
 }
 
-} // namespace vpt
+static_assert(sizeof(GpuVertex) == 48U);
+static_assert(sizeof(GpuTriangle) == 16U);
+static_assert(sizeof(GpuLight) == 64U);
+
+} // namespace arena

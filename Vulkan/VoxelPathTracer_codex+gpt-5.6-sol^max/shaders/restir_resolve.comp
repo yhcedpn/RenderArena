@@ -1,0 +1,26 @@
+#version 460
+#include "restir_common.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    FrameData frame = frameData();
+    uint pixel = gl_GlobalInvocationID.x;
+    if (pixel >= frame.counts.x) {
+        return;
+    }
+    Reservoir reservoir = reservoirSpatial.values[pixel];
+    if (reservoir.weights.w == 0.0 || shadowVisibility.values[pixel] == 0u) {
+        restirDirect.values[pixel] = vec4(0.0);
+        return;
+    }
+    float target;
+    float proposal;
+    vec3 direction;
+    float distanceToLight;
+    vec3 contribution = evaluateDirectAtHit(hits.values[pixel], pathsA.values[pixel],
+                                            reservoir.ids.x, reservoir.sampleData.xy, target, proposal,
+                                            direction, distanceToLight);
+    restirDirect.values[pixel] = vec4(contribution * reservoir.weights.z, 1.0);
+}

@@ -6,55 +6,40 @@
 #include <cstdint>
 #include <vector>
 
-namespace vpt {
+namespace arena {
 
 struct alignas(16) GpuVertex {
-    std::array<float, 4> positionU{};
-    std::array<float, 4> normalV{};
+    std::array<float, 4> position{};
+    std::array<float, 4> normal{};
+    std::array<float, 4> uv{};
 };
 
 struct alignas(16) GpuTriangle {
-    // xyz: vertex indices, w: material index
-    std::array<std::uint32_t, 4> indicesMaterial{};
-    // x: stable surface ID, y: global triangle ID, z/w reserved
-    std::array<std::uint32_t, 4> identity{};
-};
-
-struct alignas(16) GpuMaterial {
-    std::array<float, 4> baseColor{};
-    std::array<float, 4> emission{};
-    std::array<float, 4> absorption{};
-    // x: type encoded as float bits by GLSL uintBitsToFloat inverse,
-    // y: metallic, z: roughness, w: ior
-    std::array<float, 4> params{};
+    std::array<std::uint32_t, 4> data{};
 };
 
 struct alignas(16) GpuLight {
-    std::array<float, 4> p0Area{};
-    std::array<float, 4> p1Cdf{};
-    std::array<float, 4> p2SelectionPdf{};
-    // xyz: outward normal, w: material index encoded as float
-    std::array<float, 4> normalMaterial{};
+    std::array<float, 4> aArea{};
+    std::array<float, 4> bCdf{};
+    std::array<float, 4> cProbability{};
+    std::array<std::uint32_t, 4> data{};
 };
 
 struct GeometryGroup {
     std::uint32_t material{};
-    std::uint32_t firstVertex{};
-    std::uint32_t vertexCount{};
-    std::uint32_t firstIndex{};
-    std::uint32_t indexCount{};
-    std::uint32_t triangleBase{};
+    std::uint32_t firstTriangle{};
+    std::uint32_t triangleCount{};
 };
 
-struct SceneData {
+struct SceneMesh {
     std::vector<GpuVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<GpuTriangle> triangles;
-    std::vector<GpuMaterial> gpuMaterials;
     std::vector<GpuLight> lights;
     std::vector<GeometryGroup> groups;
+    std::uint32_t greedyRectangleCount{};
 };
 
-SceneData buildScene(const MaterialSet& materials);
+[[nodiscard]] SceneMesh buildShowroom(const MaterialLibrary& materials);
 
-} // namespace vpt
+} // namespace arena

@@ -1,22 +1,19 @@
 #version 460
 #include "common.glsl"
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-void main() {
+void main()
+{
+    FrameData frame = frameData();
     uint pixel = gl_GlobalInvocationID.x;
-    if (pixel >= pixelCount()) return;
-    vec3 color = signalsCurrent[pixel].emission.rgb;
-    // Five à-trous passes finish in pong: ping->pong->ping->pong->ping->pong.
-    FilterPixel filtered = filterPong[pixel];
-    for (uint domain = 0u; domain < DOMAIN_COUNT; ++domain) {
-        Guide guide = findGuide(guidesCurrent[pixel], domain);
-        vec3 value = filtered.valueVariance[domain].rgb;
-        if (guide.ids.x != 0u && guideTerminalType(guide) == 0u) {
-            // Zero albedo channels remain exactly zero after reconstruction.
-            value *= guide.albedo.rgb;
-        }
-        color += value;
+    if (pixel >= frame.counts.x) {
+        return;
     }
-    finalPixels[pixel] = vec4(max(color, vec3(0.0)), 1.0);
+    vec3 color = analyticValues.values[pixel].xyz;
+    for (uint domain = 0u; domain < DOMAIN_COUNT; ++domain) {
+        uint index = signalIndex(pixel, domain, frame.counts.x);
+        color += atrousB.values[index].xyz * albedoValues.values[index].xyz;
+    }
+    finalColors.values[pixel] = vec4(max(color, vec3(0.0)), 1.0);
 }
