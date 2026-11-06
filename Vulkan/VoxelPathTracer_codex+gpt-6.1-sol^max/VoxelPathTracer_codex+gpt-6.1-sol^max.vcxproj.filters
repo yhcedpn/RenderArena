@@ -12,4 +12,19 @@
     <None Include="VoxelPathTracer_TASK.md"><Filter>资源文件</Filter></None>
     <None Include="materials.json"><Filter>资源文件</Filter></None>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\scene.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\renderer.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClInclude Include="src\scene.hpp"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\renderer.hpp"><Filter>头文件</Filter></ClInclude>
+    <None Include="shaders\shared.glsl"><Filter>源文件</Filter></None>
+    <None Include="shaders\wave.comp"><Filter>源文件</Filter></None>
+    <None Include="shaders\trace.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\surface.rchit"><Filter>源文件</Filter></None>
+    <None Include="shaders\sky.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rgen"><Filter>源文件</Filter></None>
+    <None Include="shaders\shadow.rmiss"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.vert"><Filter>源文件</Filter></None>
+    <None Include="shaders\display.frag"><Filter>源文件</Filter></None>
+  </ItemGroup>
 </Project>

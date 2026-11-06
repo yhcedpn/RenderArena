@@ -1,0 +1,162 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "shared.glsl"
+layout(local_size_x=64) in;
+uint workID(){return (gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x)*64u+gl_LocalInvocationID.x;}
+void enqueue(Path p){uint j=atomicAdd(counters[1u-pc.queue],1u);if(pc.queue==0u)qb[j]=p;else qa[j]=p;}
+void shadowTask(Guide g,uint lightID,vec2 uv,vec3 value,uint slot){
+    vec3 dest=lightPoint(lightID,uv),o=offsetRay(g.actual.xyz,g.geometry.xyz,dest-g.actual.xyz),d=dest-o;float distance=length(d);
+    uint j=atomicAdd(counters[2],1u);shadows[j]=Shadow(vec4(o,0),vec4(d/distance,max(0.0,distance-0.0004)),vec4(value,0),uvec4(slot,0,0,0));
+}
+void saveGuide(inout Path p,Hit h,vec3 albedo,float rough,uint kind){
+    uint slot=p.id.x*3u+p.id.y;
+    vec3 n=dot(h.normal.xyz,p.direction.xyz)<0.0?h.normal.xyz:-h.normal.xyz;
+    if((p.flags.y&4u)!=0u){
+        if((p.flags.y&16u)!=0u){
+            // 首次玻璃前已有非 delta 顶点：位置/法线/albedo 仍锚定其主信号，
+            // actual/geometry/aux.zw 验证这条玻璃分支的独立终端，不能拿主 hit 冒充终端。
+            Guide rooted=guides[slot];rooted.ids.x=1u;rooted.actual=vec4(h.position.xyz,p.previous.w);rooted.geometry=vec4(n,h.normal.w);rooted.view=vec4(-p.direction.xyz,0);
+            rooted.chain=uvec4(p.flags.w,p.flags.z,(p.flags.y&8u)!=0u?1u:0u,2u);rooted.aux.z=float(h.ids.z);rooted.aux.w=rough;guides[slot]=rooted;p.flags.y&=~16u;
+        }return;
+    }
+    bool trans=(p.flags.y&8u)!=0u;vec3 point=trans?h.position.xyz:mapVector(p,h.position.xyz)+p.translation.xyz;
+    vec3 normal=trans?n:mapVector(p,n);
+    Guide g;g.position=vec4(point,1);g.normal=vec4(normal,rough);g.albedo=vec4(albedo,float(kind));g.actual=h.position;g.geometry=vec4(n,h.normal.w);g.view=vec4(-p.direction.xyz,0);
+    g.ids=uvec4(1,uint(h.normal.w),h.ids.z,p.id.y);g.chain=uvec4(p.flags.w,p.flags.z,trans?1u:0u,0);
+    g.aux=vec4(max(0.002,p.direction.w*p.previous.w),p.previous.w,0,0);guides[slot]=g;p.flags.y|=4u;
+}
+void continuePath(Path p,vec3 direction,vec3 point,vec3 geom,inout uint rng){
+    p.origin=vec4(offsetRay(point,geom,direction),0);p.direction.xyz=direction;p.id.z++;
+    if(p.id.z>=4u){float survival=clamp(max3(p.beta.xyz),0.05,0.95);if(rnd(rng)>=survival)return;p.beta.xyz/=survival;}
+    enqueue(p);
+}
+void dielectric(vec3 direction,vec3 geometric,bool inside,float ior,out float F,out vec3 transmitted){
+    vec3 n=dot(direction,geometric)<0.0?geometric:-geometric;float eta=inside?ior:1.0/ior,c=clamp(-dot(n,direction),0.0,1.0),s2=eta*eta*(1.0-c*c);
+    if(s2>=1.0){F=1;transmitted=vec3(0);return;}float ct=sqrt(1.0-s2),ni=inside?ior:1.0,nt=inside?1.0:ior;
+    float rs=(ni*c-nt*ct)/(ni*c+nt*ct),rp=(nt*c-ni*ct)/(nt*c+ni*ct);F=0.5*(rs*rs+rp*rp);transmitted=normalize(eta*direction+(eta*c-ct)*n);
+}
+void shade(uint i){
+    if(i>=counters[pc.queue])return;Path p=pc.queue==0u?qa[i]:qb[i];Hit h=hits[i];uint slot=p.id.x*3u+p.id.y;
+    uint rng=hash32(p.id.x^hash32(frame.extent.z)^hash32(p.id.y*4099u+p.id.z*131u+17u));
+    if(h.ids.x==0u){
+        // 黑色环境单独解析合成。miss 也结束光学链，但不将无穷远域作空间滤波。
+        if((p.flags.y&4u)==0u){Guide g=Guide(vec4(p.direction.xyz,0),vec4(0),vec4(0,0,0,4),vec4(0),vec4(0),vec4(0),uvec4(1,0xffffffffu,0,p.id.y),uvec4(p.flags.w,p.flags.z,(p.flags.y&8u)!=0u?1u:0u,0),vec4(0));guides[slot]=g;}
+        else if((p.flags.y&16u)!=0u){guides[slot].ids.x=0u;}
+        return;
+    }
+    if(p.id.w!=0u)p.beta.xyz*=exp(-materials[frame.control.z].absorptionIor.xyz*h.position.w);
+    p.previous.w+=h.position.w;Material m=materials[h.ids.w];uint type=uint(m.emissionType.w);
+    float footprint=p.direction.w*p.previous.w/max(0.05,abs(dot(h.normal.xyz,p.direction.xyz)));
+    float lod=clamp(log2(max(1.0,footprint*frame.limits.x)),0.0,frame.limits.y);
+    vec3 albedo=textureLod(colorTexture,vec3(h.uv.xy,float(h.ids.w)),lod).xyz;float rough=textureLod(roughTexture,vec3(h.uv.xy,float(h.ids.w)),lod).r;
+    if(type==4u){
+        bool front=dot(h.normal.xyz,p.direction.xyz)<0.0;
+        if(front){float w=1.0;uint previous=p.flags.y&3u;if(previous==1u)w=0.0;else if(previous==2u)w=powerMIS(p.beta.w,lightSolidPdf(h.ids.y,p.previous.xyz,h.position.xyz));
+            vec3 value=p.beta.xyz*m.emissionType.xyz*w;
+            bool pureDeltaTerminal=(p.flags.y&4u)==0u;saveGuide(p,h,vec3(1),0,3u);
+            if(pureDeltaTerminal)signals[slot*2u+1u].xyz+=value;else signals[slot*2u].xyz+=value;}
+        return;
+    }
+    if(type==0u||type==1u){
+        saveGuide(p,h,albedo,rough,type==0u?1u:2u);
+        if(p.id.z>=8u)return;
+        Guide local=guides[slot];local.actual=h.position;local.geometry=vec4(dot(h.normal.xyz,p.direction.xyz)<0.0?h.normal.xyz:-h.normal.xyz,h.normal.w);local.view=vec4(-p.direction.xyz,0);local.albedo=vec4(albedo,type==0u?1.0:2.0);local.normal.w=rough;
+        bool restir=p.id.z==0u&&p.id.y==0u;
+        if(restir){guides[slot].chain.w=1u;}
+        else if(frame.control.w>0u){uint lightID;vec2 uv=sampleLight(rng,lightID);float bp,lp;vec3 f=directValue(local,lightID,uv,bp,lp);float areaPdf=lights[lightID].distribution.y/lights[lightID].distribution.x;
+            if(lp>0.0&&max3(f)>0.0)shadowTask(local,lightID,uv,p.beta.xyz*f/areaPdf*powerMIS(lp,bp),slot);}
+        float pdf;vec3 f;vec3 wi=sampleBSDF(local,rng,pdf,f);if(pdf<=0.0||dot(local.geometry.xyz,wi)<=0.0)return;
+        p.beta.xyz*=f*abs(dot(local.geometry.xyz,wi))/pdf;p.beta.w=pdf;p.previous.xyz=h.position.xyz;p.flags.y=(p.flags.y&~3u)|(restir?1u:2u);
+        p.direction.w+=type==0u?0.35:rough*0.2;
+        continuePath(p,wi,h.position.xyz,h.normal.xyz,rng);return;
+    }
+    if(p.id.z>=8u)return;
+    p.flags.y&=~3u;p.beta.w=0.0;
+    if(type==2u){p.beta.xyz*=albedo;appendReflection(p,h.normal.xyz,h.position.xyz,h.ids.z,0u);continuePath(p,reflect(p.direction.xyz,h.normal.xyz),h.position.xyz,h.normal.xyz,rng);return;}
+    float F;vec3 wt;dielectric(p.direction.xyz,h.normal.xyz,p.id.w!=0u,m.absorptionIor.w,F,wt);float eta=p.id.w!=0u?m.absorptionIor.w:1.0/m.absorptionIor.w;
+    if(p.flags.x==0u){
+        // 首次玻璃确定性拆分；已有 slot 的贡献留在原位，每条后续路径写独立 slot。
+        if((p.flags.y&4u)!=0u){p.flags.y|=16u;p.flags.z=0u;p.flags.w=0u;p.a0=vec4(1,0,0,0);p.a1=vec4(0,1,0,0);p.a2=vec4(0,0,1,0);p.translation=vec4(0);}
+        Path reflection=p;reflection.flags.x=1u;reflection.id.y=1u;reflection.beta.xyz*=F;
+        Guide inherited=guides[slot];if(inherited.ids.x!=0u){inherited.ids.x=0u;inherited.ids.w=1u;inherited.chain.w=2u;guides[p.id.x*3u+1u]=inherited;}
+        appendReflection(reflection,h.normal.xyz,h.position.xyz,h.ids.z,1u);
+        if(F>0.0)continuePath(reflection,reflect(p.direction.xyz,h.normal.xyz),h.position.xyz,h.normal.xyz,rng);
+        if(F<1.0){Path transmission=p;transmission.flags.x=1u;transmission.id.y=2u;transmission.id.w=1u-p.id.w;transmission.beta.xyz*=(1.0-F)*eta*eta;appendTransmission(transmission,h.ids.z,2u);
+            if((p.flags.y&16u)!=0u){inherited.ids.w=2u;inherited.chain.z=1u;guides[p.id.x*3u+2u]=inherited;}
+            continuePath(transmission,wt,h.position.xyz,h.normal.xyz,rng);}
+    } else {
+        // 以 Fresnel 为离散 proposal，反射 F/F、透射 (1-F)/(1-F)，仅 eta² 保留。
+        if(rnd(rng)<F){appendReflection(p,h.normal.xyz,h.position.xyz,h.ids.z,1u);continuePath(p,reflect(p.direction.xyz,h.normal.xyz),h.position.xyz,h.normal.xyz,rng);}
+        else {p.beta.xyz*=eta*eta;p.id.w=1u-p.id.w;appendTransmission(p,h.ids.z,2u);if(guides[slot].ids.x!=0u)guides[slot].chain.z=1u;continuePath(p,wt,h.position.xyz,h.normal.xyz,rng);}
+    }
+}
+Reservoir emptyR(){return Reservoir(uvec4(0),vec4(0));}
+void selectSample(inout Reservoir r,uint lightID,vec2 uv,float w,inout uint rng){
+    if(w<=0.0)return;r.value.w+=w;if(rnd(rng)*r.value.w<w){r.meta.x=lightID;r.meta.z=1u;r.value.xy=uv;}
+}
+Reservoir combine(Guide dst,Reservoir sources[5],Guide sourceGuides[5],uint count,inout uint rng){
+    Reservoir r=emptyR();
+    for(uint i=0u;i<count;++i){Reservoir s=sources[i];uint M=min(s.meta.y,32u);r.meta.y+=M;if(s.meta.z==0u)continue;float t=target(dst,s.meta.x,s.value.xy);selectSample(r,s.meta.x,s.value.xy,t*s.value.z*float(M),rng);}
+    if(r.meta.z==0u)return r;
+    // ReSTIR 支持域校正：选中 y 后，仅计入 target_source(y)>0 的 source multiplicity。
+    // W = Σ(target_dst(y_i) W_i M_i) / (target_dst(y) Σ M_i 1[target_i(y)>0])。
+    float Z=0.0;for(uint i=0u;i<count;++i)if(target(sourceGuides[i],r.meta.x,r.value.xy)>0.0)Z+=float(min(sources[i].meta.y,32u));
+    float t=target(dst,r.meta.x,r.value.xy);r.value.z=(t>0.0&&Z>0.0)?r.value.w/(t*Z):0.0;
+    r.meta.y=min(r.meta.y,32u);r.value.w=r.value.z*t*float(r.meta.y);return r;
+}
+bool restirGuide(Guide g){return g.ids.x!=0u&&g.chain.w==1u;}
+void restirInitial(uint i){Guide g=guides[i*3u];Reservoir r=emptyR();if(restirGuide(g)&&frame.control.w>0u){uint rng=hash32(i^hash32(frame.extent.z+1987u));r.meta.y=4u;
+    for(uint k=0u;k<4u;++k){uint l;vec2 uv=sampleLight(rng,l);float t=target(g,l,uv),q=lights[l].distribution.y/lights[l].distribution.x;selectSample(r,l,uv,t/q,rng);}
+    if(r.meta.z!=0u){float t=target(g,r.meta.x,r.value.xy);r.value.z=t>0.0?r.value.w/(4.0*t):0.0;}}
+    initialR[i]=r;
+}
+void restirTemporal(uint i){Guide g=guides[i*3u];Reservoir src[5];Guide gs[5];src[0]=initialR[i];gs[0]=g;uint count=1u;
+    if(frame.control.x==0u&&restirGuide(g)){int old=reproject(g);if(old>=0&&compatible(g,oldGuides[uint(old)*3u],false)&&restirGuide(oldGuides[uint(old)*3u])){src[1]=oldR[old];gs[1]=oldGuides[uint(old)*3u];count=2u;}}
+    uint rng=hash32(i^hash32(frame.extent.z+8171u));temporalR[i]=restirGuide(g)?combine(g,src,gs,count,rng):emptyR();
+}
+void restirSpatial(uint i){Guide g=guides[i*3u];if(!restirGuide(g)){spatialR[i]=emptyR();return;}Reservoir src[5];Guide gs[5];src[0]=temporalR[i];gs[0]=g;uint count=1u,rng=hash32(i^hash32(frame.extent.z+4523u));ivec2 p=ivec2(i%frame.extent.x,i/frame.extent.x);
+    for(uint k=0u;k<4u;++k){float angle=rnd(rng)*2.0*PI,rad=sqrt(rnd(rng))*8.0;ivec2 o=ivec2(round(vec2(cos(angle),sin(angle))*rad));if(dot(o,o)>64)o=ivec2(round(normalize(vec2(o))*7.0));if(all(equal(o,ivec2(0))))o=ivec2(1,0);ivec2 q=p+o;
+        if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,ivec2(frame.extent.xy))))continue;uint j=uint(q.y)*frame.extent.x+uint(q.x);Guide n=guides[j*3u];if(!compatible(g,n,true)||!restirGuide(n))continue;src[count]=temporalR[j];gs[count]=n;count++;}
+    spatialR[i]=combine(g,src,gs,count,rng);
+}
+vec3 demodulated(uint s){vec3 c=signals[s*2u].xyz;Guide g=guides[s];if(g.albedo.w==1.0)c=vec3(g.albedo.x>0.0?c.x/g.albedo.x:0.0,g.albedo.y>0.0?c.y/g.albedo.y:0.0,g.albedo.z>0.0?c.z/g.albedo.z:0.0);return c;}
+void temporal(uint s){Guide g=guides[s];vec3 c=demodulated(s);float l=luminance(c),lengthH=1,m1=l,m2=l*l;vec3 accum=c;
+    bool allowed=frame.control.x==0u&&g.ids.x!=0u&&g.albedo.w<3.0&&!(g.chain.z!=0u&&frame.control.y!=0u);
+    int j=-1;if(allowed){if(g.chain.z!=0u){ // 静止折射：同像素采样格，显式补偿前后 jitter。
+            uint p=s/3u;vec2 xy=vec2(p%frame.extent.x,p/frame.extent.x)+frame.jitter.xy-frame.jitter.zw;ivec2 q=ivec2(floor(xy+0.5));if(all(greaterThanEqual(q,ivec2(0)))&&all(lessThan(q,ivec2(frame.extent.xy))))j=q.y*int(frame.extent.x)+q.x;
+        }else j=reproject(g);}
+    if(j>=0){uint os=uint(j)*3u+s%3u;Guide og=oldGuides[os];if(compatible(g,og,false)){History h=oldHistory[os];lengthH=min(32.0,h.moments.z+1.0);float a=1.0/lengthH;accum=mix(h.color.xyz,c,a);m1=mix(h.moments.x,l,a);m2=mix(h.moments.y,l*l,a);}}
+    if(g.ids.x==0u)lengthH=1.0;history[s]=History(vec4(accum,0),vec4(m1,m2,lengthH,max(0.0,m2-m1*m1)));
+}
+void variance(uint s){Guide g=guides[s];History h=history[s];float v=h.moments.w;if(h.moments.z<4.0&&g.ids.x!=0u){uint p=s/3u;ivec2 xy=ivec2(p%frame.extent.x,p/frame.extent.x);float wsum=0,m1=0,m2=0;
+    for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x){ivec2 q=xy+ivec2(x,y);if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,ivec2(frame.extent.xy))))continue;uint j=(uint(q.y)*frame.extent.x+uint(q.x))*3u+s%3u;if(!compatible(g,guides[j],true))continue;float w=exp(-float(x*x+y*y)/4.0);m1+=history[j].moments.x*w;m2+=history[j].moments.y*w;wsum+=w;}
+    if(wsum>0.0)v=max(v,max(0.0,m2/wsum-pow(m1/wsum,2.0)));}
+    filterA[s]=vec4(h.color.xyz,v);
+}
+vec4 filterRead(uint s){return (pc.iteration&1u)==0u?filterA[s]:filterB[s];}
+void atrous(uint s){Guide g=guides[s];vec4 center=filterRead(s);if(g.ids.x==0u||g.albedo.w>=3.0){if((pc.iteration&1u)==0u)filterB[s]=center;else filterA[s]=center;return;}
+    uint p=s/3u;ivec2 xy=ivec2(p%frame.extent.x,p/frame.extent.x);int stepSize=1<<pc.iteration;const float kernel[5]=float[](1.0/16,4.0/16,6.0/16,4.0/16,1.0/16);vec3 sum=vec3(0);float wsum=0,var=0;
+    for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x){ivec2 q=xy+ivec2(x,y)*stepSize;if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,ivec2(frame.extent.xy))))continue;uint j=(uint(q.y)*frame.extent.x+uint(q.x))*3u+s%3u;Guide n=guides[j];if(!compatible(g,n,true))continue;vec4 c=filterRead(j);
+        float dist=abs(dot(g.position.xyz-n.position.xyz,g.normal.xyz));float normalW=pow(max(0.0,dot(g.normal.xyz,n.normal.xyz)),64.0);float roughW=exp(-abs(g.normal.w-n.normal.w)*16.0);
+        // 0.01 为 demodulated scene-linear 亮度尺度，避免零方差时除零；几何长度以世界单位计。
+        float colorW=exp(-abs(luminance(c.xyz)-luminance(center.xyz))/(4.0*sqrt(max(0.0,c.w+center.w))+0.01));
+        float w=kernel[x+2]*kernel[y+2]*normalW*roughW*exp(-dist/(0.01+0.02*float(stepSize)))*colorW;sum+=w*c.xyz;var+=w*w*c.w;wsum+=w;}
+    vec4 value=wsum>0.0?vec4(sum/wsum,var/(wsum*wsum)):center;if((pc.iteration&1u)==0u)filterB[s]=value;else filterA[s]=value;
+}
+void main(){uint i=workID(),N=pixels();
+    if(pc.mode==0u){if(i>=N)return;for(uint b=0u;b<3u;++b){uint s=i*3u+b;signals[s*2u]=vec4(0);signals[s*2u+1u]=vec4(0);guides[s]=Guide(vec4(0),vec4(0),vec4(0),vec4(0),vec4(0),vec4(0),uvec4(0),uvec4(0),vec4(0));}
+        vec2 xy=vec2(i%frame.extent.x,i/frame.extent.x)+0.5+frame.jitter.xy;vec2 ndc=xy/vec2(frame.extent.xy)*2.0-1.0;vec3 d=normalize(frame.forward.xyz+frame.right.xyz*(ndc.x*frame.right.w)-frame.up.xyz*(ndc.y*frame.up.w));
+        bool inside=all(greaterThan(frame.eye.xyz,vec3(7,0.125,7)))&&all(lessThan(frame.eye.xyz,vec3(9,2.125,9)));
+        Path p=Path(vec4(frame.eye.xyz,0.05/dot(d,frame.forward.xyz)),vec4(d,2.0*frame.up.w/float(frame.extent.y)),vec4(1,1,1,0),vec4(0),uvec4(i,0,0,inside?1u:0u),uvec4(0),vec4(1,0,0,0),vec4(0,1,0,0),vec4(0,0,1,0),vec4(0));qa[i]=p;
+        if(i==0u){counters[0]=N;counters[1]=0;counters[2]=0;}return;}
+    if(pc.mode==1u){if(i==0u){counters[1u-pc.queue]=0;counters[2]=0;}return;}
+    if(pc.mode==2u){shade(i);return;}
+    if(pc.mode==3u){if(i!=0u)return;uint cap=uint(frame.limits.z),n=counters[pc.queue],s=counters[2];counters[4]=min(max(n,1u),cap);counters[5]=(max(n,1u)+cap-1u)/cap;counters[6]=1;
+        counters[8]=min(max(s,1u),cap);counters[9]=(max(s,1u)+cap-1u)/cap;counters[10]=1;uint groups=(n+63u)/64u,gw=min(max(groups,1u),uint(frame.limits.w));counters[12]=gw;counters[13]=(max(groups,1u)+gw-1u)/gw;counters[14]=1;return;}
+    if(pc.mode==4u){if(i<counters[2]&&visibility[i]!=0u)signals[shadows[i].info.x*2u].xyz+=shadows[i].contribution.xyz;return;}
+    if(pc.mode==5u){if(i<N)restirInitial(i);return;}
+    if(pc.mode==6u){if(i<N)restirTemporal(i);return;}
+    if(pc.mode==7u){if(i<N)restirSpatial(i);return;}
+    if(pc.mode==8u){if(i>=N)return;Reservoir r=spatialR[i];if(r.meta.z!=0u&&r.value.z>0.0){float a,b;vec3 f=directValue(guides[i*3u],r.meta.x,r.value.xy,a,b);shadowTask(guides[i*3u],r.meta.x,r.value.xy,f*r.value.z,i*3u);}return;}
+    if(i>=N*3u)return;if(pc.mode==9u)temporal(i);else if(pc.mode==10u)variance(i);else if(pc.mode==11u)atrous(i);
+}

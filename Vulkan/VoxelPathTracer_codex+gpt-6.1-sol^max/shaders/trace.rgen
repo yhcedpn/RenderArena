@@ -1,0 +1,8 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+#include "shared.glsl"
+layout(set=0,binding=0) uniform accelerationStructureEXT world;
+layout(location=0) rayPayloadEXT Hit result;
+void main(){uint i=gl_LaunchIDEXT.x+gl_LaunchIDEXT.y*gl_LaunchSizeEXT.x;if(i>=counters[pc.queue])return;Path p=pc.queue==0u?qa[i]:qb[i];
+    result.ids=uvec4(0);traceRayEXT(world,gl_RayFlagsOpaqueEXT,255,0,0,0,p.origin.xyz,p.origin.w,p.direction.xyz,1e30,0);hits[i]=result;}

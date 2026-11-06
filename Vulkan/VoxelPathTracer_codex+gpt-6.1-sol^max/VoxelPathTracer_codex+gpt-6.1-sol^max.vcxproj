@@ -32,4 +32,19 @@
     <None Include="materials.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ItemGroup>
+    <ClCompile Include="src\scene.cpp" />
+    <ClCompile Include="src\renderer.cpp" />
+    <ClInclude Include="src\scene.hpp" />
+    <ClInclude Include="src\renderer.hpp" />
+    <None Include="shaders\shared.glsl" />
+    <None Include="shaders\wave.comp" />
+    <None Include="shaders\trace.rgen" />
+    <None Include="shaders\surface.rchit" />
+    <None Include="shaders\sky.rmiss" />
+    <None Include="shaders\shadow.rgen" />
+    <None Include="shaders\shadow.rmiss" />
+    <None Include="shaders\display.vert" />
+    <None Include="shaders\display.frag" />
+  </ItemGroup>
 </Project>
