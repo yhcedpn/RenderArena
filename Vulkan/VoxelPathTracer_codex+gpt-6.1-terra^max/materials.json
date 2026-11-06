@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "textureSize": 128,
+  "materials": [
+    {
+      "id": "stone", "type": "diffuse",
+      "baseColorSRGB": [0.55, 0.55, 0.55], "metallic": 0.0, "roughness": 1.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "stone_noise", "textureSeed": 1337,
+      "baseColorVariation": 0.08, "roughnessVariation": 0.0
+    },
+    {
+      "id": "wood", "type": "diffuse",
+      "baseColorSRGB": [0.48, 0.26, 0.10], "metallic": 0.0, "roughness": 1.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "wood_grain", "textureSeed": 7331,
+      "baseColorVariation": 0.12, "roughnessVariation": 0.0
+    },
+    {
+      "id": "red", "type": "diffuse",
+      "baseColorSRGB": [0.75, 0.12, 0.08], "metallic": 0.0, "roughness": 1.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "solid", "textureSeed": 0,
+      "baseColorVariation": 0.0, "roughnessVariation": 0.0
+    },
+    {
+      "id": "blue", "type": "diffuse",
+      "baseColorSRGB": [0.08, 0.20, 0.75], "metallic": 0.0, "roughness": 1.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "solid", "textureSeed": 0,
+      "baseColorVariation": 0.0, "roughnessVariation": 0.0
+    },
+    {
+      "id": "rough_metal", "type": "rough_metal",
+      "baseColorSRGB": [0.85, 0.66, 0.30], "metallic": 1.0, "roughness": 0.25,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "stone_noise", "textureSeed": 2026,
+      "baseColorVariation": 0.02, "roughnessVariation": 0.03
+    },
+    {
+      "id": "mirror", "type": "mirror",
+      "baseColorSRGB": [0.97, 0.97, 0.97], "metallic": 1.0, "roughness": 0.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [0.0, 0.0, 0.0],
+      "pattern": "solid", "textureSeed": 0,
+      "baseColorVariation": 0.0, "roughnessVariation": 0.0
+    },
+    {
+      "id": "glass", "type": "dielectric",
+      "baseColorSRGB": [1.0, 1.0, 1.0], "metallic": 0.0, "roughness": 0.0,
+      "ior": 1.5, "absorption": [0.12, 0.035, 0.01], "emission": [0.0, 0.0, 0.0],
+      "pattern": "solid", "textureSeed": 0,
+      "baseColorVariation": 0.0, "roughnessVariation": 0.0
+    },
+    {
+      "id": "glow", "type": "emissive",
+      "baseColorSRGB": [1.0, 1.0, 1.0], "metallic": 0.0, "roughness": 1.0,
+      "ior": 1.0, "absorption": [0.0, 0.0, 0.0], "emission": [20.0, 16.0, 10.0],
+      "pattern": "solid", "textureSeed": 0,
+      "baseColorVariation": 0.0, "roughnessVariation": 0.0
+    }
+  ]
+}
