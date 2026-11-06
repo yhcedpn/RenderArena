@@ -1,0 +1,33 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (i>=n) return;
+    uint phase=(pc.frame&1u)*n,inputIndex=pc.inputQueue*n+i,outputIndex=(1u-pc.inputQueue)*n+i;
+    History h=histories[phase+i]; FilterValue center=filters[inputIndex];
+    if (h.valid==0u) { filters[outputIndex]=center; return; }
+    Guide guide=guides[phase+i]; ivec2 p=ivec2(int(i%pc.width),int(i/pc.width));
+    const float kernel[5]=float[5](1.0,4.0,6.0,4.0,1.0); int stride=1<<int(pc.mode);
+    vec3 sum=vec3(0); float total=0.0, varianceSum=0.0, centerLuma=luminance(center.color);
+    // 深度容差以世界单位和当前像素的投影足迹计；亮度常量为线性信号尺度。
+    float depthScale=0.03+2.0*length(guide.position-pc.position)*float(stride)/float(pc.height);
+    for (int y=-2;y<=2;++y) for (int x=-2;x<=2;++x) {
+        ivec2 q=p+ivec2(x,y)*stride;
+        if (any(lessThan(q,ivec2(0))) || any(greaterThanEqual(q,ivec2(pc.width,pc.height)))) continue;
+        uint j=uint(q.y)*pc.width+uint(q.x); History otherHistory=histories[phase+j]; Guide other=guides[phase+j];
+        if (otherHistory.valid==0u || other.type!=guide.type || other.material!=guide.material || other.surface!=guide.surface ||
+            (dot(other.normal,other.view)>=0.0)!=(dot(guide.normal,guide.view)>=0.0)) continue;
+        float normalWeight=pow(max(0.0,dot(guide.normal,other.normal)),32.0);
+        float depthWeight=exp(-abs(dot(other.position-guide.position,guide.normal))/depthScale);
+        float roughWeight=exp(-abs(other.roughness-guide.roughness)/0.2);
+        FilterValue sampleValue=filters[pc.inputQueue*n+j];
+        float sigma=0.01+4.0*sqrt(max(0.0,center.variance+sampleValue.variance));
+        float lumaWeight=exp(-abs(luminance(sampleValue.color)-centerLuma)/sigma);
+        float weight=kernel[x+2]*kernel[y+2]*normalWeight*depthWeight*roughWeight*lumaWeight;
+        sum+=weight*sampleValue.color; varianceSum+=weight*weight*sampleValue.variance; total+=weight;
+    }
+    filters[outputIndex]=total>0.0 ? FilterValue(sum/total,varianceSum/(total*total)) : center;
+}

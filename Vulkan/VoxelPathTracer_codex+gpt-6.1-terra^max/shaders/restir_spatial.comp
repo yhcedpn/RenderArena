@@ -1,0 +1,42 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (i>=n) return;
+    Guide current=guides[(pc.frame&1u)*n+i]; Reservoir sources[5]; Guide sourceGuides[5];
+    sources[0]=reservoirs[n+i]; sourceGuides[0]=current; uint sourceCount=1u;
+    const ivec2 offsets[8]=ivec2[8](ivec2(4,0),ivec2(3,3),ivec2(0,4),ivec2(-3,3),
+        ivec2(-4,0),ivec2(-3,-3),ivec2(0,-4),ivec2(3,-3));
+    uint rotation=hashValue(i^hashValue(pc.frame+0x68bc21ebu))&7u;
+    ivec2 pixel=ivec2(int(i%pc.width),int(i/pc.width));
+    if (current.type<=1u) for (uint k=0u;k<4u;++k) {
+        ivec2 q=pixel+offsets[(rotation+2u*k)&7u];
+        if (any(lessThan(q,ivec2(0))) || any(greaterThanEqual(q,ivec2(pc.width,pc.height)))) continue;
+        uint j=uint(q.y)*pc.width+uint(q.x); Guide neighbour=guides[(pc.frame&1u)*n+j];
+        if (!compatible(current,neighbour)) continue;
+        sourceGuides[sourceCount]=neighbour; sources[sourceCount]=reservoirs[n+j]; sourceCount++;
+    }
+    Reservoir result=emptyReservoir(); uint rng=hashValue(i^hashValue(pc.frame+0x02e5be93u));
+    for (uint k=0u;k<sourceCount;++k) consider(result,sources[k],current,rng);
+    if (result.valid!=0u) {
+        float target=luminance(targetColor(current,result.light,result.bary)),support=0.0;
+        // 每个源仅在所选样本位于该源目标的支持域内时提供归一化样本数。
+        for (uint k=0u;k<sourceCount;++k)
+            if (luminance(targetColor(sourceGuides[k],result.light,result.bary))>0.0) support+=float(sources[k].M);
+        if (target>0.0 && support>0.0) result.W=result.weightSum/(target*support); else result.valid=0u;
+    }
+    reservoirs[(2u+(pc.frame&1u))*n+i]=result;
+    shadows[i].valid=0u;
+    if (result.valid!=0u && result.W>0.0) {
+        vec3 lightPosition=lightPoint(result.light,result.bary),delta=lightPosition-current.position;
+        vec3 wi=normalize(delta); Shadow task; task.slot=2u*i;
+        task.origin=current.position+current.normal*(dot(wi,current.normal)>=0.0 ? 0.0002 : -0.0002);
+        vec3 shadowDelta=lightPosition-task.origin; float distance=length(shadowDelta);
+        task.direction=shadowDelta/distance; task.distance=max(0.0,distance-0.0002);
+        task.contribution=targetColor(current,result.light,result.bary)*result.W;
+        task.valid=uint(task.distance>0.0); task.visible=0u; shadows[i]=task;
+    }
+}

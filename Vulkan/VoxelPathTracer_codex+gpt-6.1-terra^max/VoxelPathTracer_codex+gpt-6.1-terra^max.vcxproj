@@ -26,6 +26,36 @@
   <Import Project="..\..\cmake\RenderArena.props" />
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="src\scene.cpp" />
+    <ClInclude Include="src\scene.hpp" />
+    <ClCompile Include="src\vulkan.cpp" />
+    <ClInclude Include="src\vulkan.hpp" />
+    <ClCompile Include="src\gpu_scene.cpp" />
+    <ClInclude Include="src\gpu_scene.hpp" />
+    <ClCompile Include="src\renderer.cpp" />
+    <ClInclude Include="src\renderer.hpp" />
+    <None Include="shaders\common.glsl" />
+    <None Include="shaders\primary.comp" />
+    <None Include="shaders\trace.rgen" />
+    <None Include="shaders\trace.rchit" />
+    <None Include="shaders\trace.rmiss" />
+    <None Include="shaders\prepare.comp" />
+    <None Include="shaders\scatter.comp" />
+    <None Include="shaders\shadow_resolve.comp" />
+    <None Include="shaders\restir.glsl" />
+    <None Include="shaders\restir_init.comp" />
+    <None Include="shaders\restir_temporal.comp" />
+    <None Include="shaders\restir_spatial.comp" />
+    <None Include="shaders\svgf_temporal.comp" />
+    <None Include="shaders\svgf_variance.comp" />
+    <None Include="shaders\svgf_atrous.comp" />
+    <None Include="shaders\optics.glsl" />
+    <None Include="shaders\optical_filter.glsl" />
+    <None Include="shaders\optical_temporal.comp" />
+    <None Include="shaders\optical_variance.comp" />
+    <None Include="shaders\optical_atrous.comp" />
+    <None Include="shaders\display.vert" />
+    <None Include="shaders\display.frag" />
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md" />

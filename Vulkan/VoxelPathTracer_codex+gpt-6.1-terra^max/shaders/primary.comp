@@ -1,0 +1,24 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "optics.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 64u + gl_LocalInvocationID.x;
+    uint n = pc.width * pc.height;
+    if (i >= n) return;
+    if (i == 0u) { counters.count[0] = n; counters.count[1] = 0u; }
+    radiance[2u*i] = vec4(0); radiance[2u*i+1u] = vec4(0); prefixRadiance[i]=vec4(0); prefixOptical[2u*i]=vec4(0); prefixOptical[2u*i+1u]=vec4(0); signalFlags[i]=0u;
+    resetOptical(2u*i); resetOptical(2u*i+1u);
+    uint rng = hashValue(i ^ hashValue(pc.frame + 0x91e10da5u));
+    float jitterX = randomValue(rng); float jitterY = randomValue(rng);
+    vec2 jitter = vec2(jitterX, jitterY);
+    vec2 uv = (vec2(i % pc.width, i / pc.width) + jitter) / vec2(pc.width, pc.height);
+    vec2 screen = vec2((2.0*uv.x-1.0)*float(pc.width)/float(pc.height), 1.0-2.0*uv.y)*pc.tanHalfFov;
+    vec3 direction = normalize(pc.forward + screen.x*pc.right + screen.y*pc.up);
+    Path p;
+    p.origin = pc.position; p.tMin = 0.05 / dot(direction, pc.forward); p.direction = direction;
+    p.cone = 2.0*pc.tanHalfFov/float(pc.height); p.throughput = vec3(1); p.slot=2u*i;
+    p.depth=0u; p.flags=uint(all(greaterThan(pc.position,vec3(7.0,0.125,7.0))) && all(lessThan(pc.position,vec3(9.0,2.125,9.0))));
+    p.rng=rng; p.footprint=0.0; p.lastBsdfPdf=0.0; writePath(0u,i,p);
+}

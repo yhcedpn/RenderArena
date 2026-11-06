@@ -1,0 +1,30 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+#include "optics.glsl"
+#include "optical_filter.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint index=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (index>=2u*n) return;
+    uint pixel=index/2u,branch=index&1u,phase=pc.frame&1u,at=opticalIndex(phase,branch,pixel);
+    History h=opticalHistories[at]; FilterValue result=FilterValue(vec3(0),0.0);
+    if (h.valid!=0u) {
+        result.color=h.color; result.variance=max(h.moment2-h.moment1*h.moment1,0.0);
+        if (h.historyLength<4u) {
+            ivec2 p=ivec2(int(pixel%pc.width),int(pixel/pc.width)); Guide center=opticalGuide(phase,branch,pixel);
+            OpticalMeta cm=opticalMetadata[at]; float m1=0.0,m2=0.0,total=0.0;
+            for (int y=-1;y<=1;++y) for (int x=-1;x<=1;++x) {
+                ivec2 q=p+ivec2(x,y);
+                if (any(lessThan(q,ivec2(0))) || any(greaterThanEqual(q,ivec2(pc.width,pc.height)))) continue;
+                uint j=uint(q.y)*pc.width+uint(q.x),oi=opticalIndex(phase,branch,j);
+                History other=opticalHistories[oi]; Guide og=opticalGuide(phase,branch,j); OpticalMeta om=opticalMetadata[oi];
+                if (other.valid==0u || !opticalCompatible(center,cm,at,og,om,oi)) continue;
+                float weight=float((x==0 ? 2 : 1)*(y==0 ? 2 : 1)); m1+=weight*other.moment1; m2+=weight*other.moment2; total+=weight;
+            }
+            if (total>0.0) { m1/=total; m2/=total; result.variance=max(result.variance,max(0.0,m2-m1*m1)); }
+        }
+    }
+    opticalFilters[branch*n+pixel]=result;
+}

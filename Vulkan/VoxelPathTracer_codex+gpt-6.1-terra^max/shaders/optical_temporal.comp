@@ -1,0 +1,28 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+#include "optics.glsl"
+#include "optical_filter.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint index=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (index>=2u*n) return;
+    uint pixel=index/2u,branch=index&1u,phase=pc.frame&1u;
+    Guide guide=opticalGuide(phase,branch,pixel); OpticalMeta meta=opticalMetadata[opticalIndex(phase,branch,pixel)];
+    History h=History(vec3(0),0.0,0.0,0u,0u,0u);
+    if (meta.valid!=0u) {
+        vec3 value=radiance[index].rgb;
+        if (guide.type==0u) for (int c=0;c<3;++c) value[c]=guide.albedo[c]>0.0 ? value[c]/guide.albedo[c] : 0.0;
+        float l=luminance(value); h.color=value; h.moment1=l; h.moment2=l*l; h.historyLength=1u; h.valid=1u;
+        uint previous=0u;
+        if (previousOptical(guide,meta,pixel,branch,previous)) {
+            History old=opticalHistories[opticalIndex((pc.frame^1u)&1u,branch,previous)];
+            if (old.valid!=0u) {
+                h.historyLength=min(old.historyLength+1u,32u); float alpha=1.0/float(h.historyLength);
+                h.color=mix(old.color,value,alpha); h.moment1=mix(old.moment1,l,alpha); h.moment2=mix(old.moment2,l*l,alpha);
+            }
+        }
+    }
+    opticalHistories[opticalIndex(phase,branch,pixel)]=h;
+}

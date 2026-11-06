@@ -1,0 +1,25 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "optics.glsl"
+layout(set=0, binding=0) uniform accelerationStructureEXT scene;
+struct Payload { float distance; uint triangle; vec2 bary; };
+layout(location=0) rayPayloadEXT Payload payload;
+void main() {
+    uint i = gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x;
+    if (i >= counters.count[pc.inputQueue]) return;
+    payload.distance = 0.0; payload.triangle = 0xffffffffu; payload.bary = vec2(0);
+    if (pc.mode==1u) {
+        Shadow task=shadows[i];
+        if (task.valid==0u) { shadows[i].visible=0u; return; }
+        traceRayEXT(scene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xff, 0, 0, 0,
+            task.origin, 0.0, task.direction, task.distance, 0);
+        shadows[i].visible=uint(payload.triangle==0xffffffffu);
+    } else {
+        Path p = readPath(pc.inputQueue, i);
+        traceRayEXT(scene, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, p.origin, p.tMin, p.direction, 1e30, 0);
+        hits[i].distance = payload.distance; hits[i].triangle = payload.triangle; hits[i].bary = payload.bary;
+        if (payload.triangle==0xffffffffu && (p.flags&16u)!=0u && (p.flags&32u)==0u) latchOpticalMiss(p);
+    }
+}

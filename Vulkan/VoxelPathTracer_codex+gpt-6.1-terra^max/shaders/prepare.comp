@@ -1,0 +1,12 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=1) in;
+void main() {
+    uint n = counters.count[pc.inputQueue];
+    uint width = min(max(n, 1u), pc.maxTraceWidth);
+    counters.traceWidth = width; counters.traceHeight = max(1u, (n + width - 1u) / width); counters.traceDepth = 1u;
+    uint groups = max(1u, (n + 63u) / 64u);
+    counters.dispatchX = min(groups, pc.maxGroupWidth);
+    counters.dispatchY = (groups + counters.dispatchX - 1u) / counters.dispatchX; counters.dispatchZ = 1u;
+}

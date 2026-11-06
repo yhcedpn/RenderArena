@@ -1,0 +1,175 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "optics.glsl"
+layout(local_size_x=64) in;
+const uint INSIDE=1u, SPLIT=2u, PREVIOUS_NEE=4u, PRIMARY_RESTIR=8u, OPTICAL=16u, TERMINAL=32u, UNTRACKED=64u;
+void frame(vec3 n, out vec3 t, out vec3 b) {
+    t = normalize(abs(n.z) < 0.999 ? cross(vec3(0,0,1), n) : cross(vec3(0,1,0), n)); b = cross(n,t);
+}
+vec3 toLocal(vec3 v, vec3 t, vec3 b, vec3 n) { return vec3(dot(v,t),dot(v,b),dot(v,n)); }
+vec3 toWorld(vec3 v, vec3 t, vec3 b, vec3 n) { return t*v.x+b*v.y+n*v.z; }
+
+vec3 vndf(vec3 view,float alpha,vec2 xi) {
+    vec3 vh=normalize(vec3(alpha*view.xy,view.z)); float lensq=dot(vh.xy,vh.xy);
+    vec3 t1=lensq>0.0 ? vec3(-vh.y,vh.x,0.0)*inversesqrt(lensq) : vec3(1,0,0); vec3 t2=cross(vh,t1);
+    float radius=sqrt(xi.x),phi=2.0*PI*xi.y; float x=radius*cos(phi),y=radius*sin(phi);
+    float s=0.5*(1.0+vh.z); y=(1.0-s)*sqrt(max(0.0,1.0-x*x))+s*y;
+    vec3 nh=x*t1+y*t2+sqrt(max(0.0,1.0-x*x-y*y))*vh;
+    return normalize(vec3(alpha*nh.xy,max(0.0,nh.z)));
+}
+float dielectricFresnel(float cosI,float etaI,float etaT,out float cosT) {
+    float eta=etaI/etaT,sinT2=eta*eta*max(0.0,1.0-cosI*cosI);
+    if (sinT2>=1.0) { cosT=0.0; return 1.0; }
+    cosT=sqrt(max(0.0,1.0-sinT2));
+    float rs=(etaI*cosI-etaT*cosT)/(etaI*cosI+etaT*cosT),rp=(etaT*cosI-etaI*cosT)/(etaT*cosI+etaI*cosT);
+    return 0.5*(rs*rs+rp*rp);
+}
+
+float emitterDirectionPdf(uint triangle,float distance,float cosine) {
+    if (pc.lightPower<=0.0 || cosine<=0.0) return 0.0;
+    for (uint i=0u;i<pc.lightCount;++i) if (lights[i].triangle==triangle)
+        return lightAreaPdf(i)*distance*distance/cosine;
+    return 0.0;
+}
+void sampleLight(inout Path p,uint taskIndex,vec3 point,vec3 gn,vec3 n,vec3 albedo,float roughness,uint type) {
+    if (pc.lightCount==0u || pc.lightPower<=0.0) return;
+    float selected=randomValue(p.rng)*pc.lightPower; uint index=0u;
+    while (index+1u<pc.lightCount && selected>=lights[index].cumulativePower) ++index;
+    Light light=lights[index]; Vertex a=vertices[3u*light.triangle],b=vertices[3u*light.triangle+1u],c=vertices[3u*light.triangle+2u];
+    float u=randomValue(p.rng),v=randomValue(p.rng),root=sqrt(u);
+    vec3 lightPoint=(1.0-root)*a.position+root*(1.0-v)*b.position+root*v*c.position;
+    vec3 delta=lightPoint-point; float distance2=dot(delta,delta); if (distance2<=0.000001) return;
+    vec3 wi=delta*inversesqrt(distance2),view=-p.direction;
+    float noL=max(0.0,dot(n,wi)), noV=max(0.0,dot(n,view)), lightCos=max(0.0,dot(a.normal,-wi));
+    if (noL<=0.0 || noV<=0.0 || lightCos<=0.0) return;
+    float areaPdf=lightAreaPdf(index), lightPdf=areaPdf*distance2/lightCos, bsdfPdf;
+    vec3 f;
+    if (type==0u) { f=albedo/PI; bsdfPdf=noL/PI; }
+    else {
+        float alpha=max(roughness*roughness,0.0001),a2=alpha*alpha;
+        vec3 h=normalize(view+wi); float noH=max(0.0,dot(n,h)),voH=max(0.0,dot(view,h));
+        float d=ggxD(noH,a2); vec3 F=albedo+(1.0-albedo)*pow(1.0-voH,5.0);
+        f=F*d*smithG2(noV,noL,a2)/(4.0*noV*noL); bsdfPdf=d*smithG1(noV,a2)/(4.0*noV);
+    }
+    vec3 emission=materials[triangles[light.triangle].material].emission;
+    Shadow task; task.slot=p.slot;
+    // 偏移量以世界单位计，远小于场景中最小的 0.125 单位间隙。
+    task.origin=point+gn*(dot(wi,gn)>=0.0 ? 0.0002 : -0.0002);
+    vec3 shadowDelta=lightPoint-task.origin; float distance=length(shadowDelta);
+    task.direction=shadowDelta/distance; task.distance=max(0.0,distance-0.0002);
+    task.contribution=p.throughput*f*emission*(noL*lightCos/(distance2*areaPdf))*powerWeight(lightPdf,bsdfPdf);
+    task.valid=uint(task.distance>0.0); shadows[taskIndex]=task;
+}
+void enqueue(Path p,vec3 point,vec3 gn) {
+    p.origin=point+gn*(dot(p.direction,gn)>=0.0 ? 0.0002 : -0.0002); p.tMin=0.0;
+    if (p.depth>=4u) {
+        float survival=clamp(max(p.throughput.r,max(p.throughput.g,p.throughput.b)),0.05,0.95);
+        if (randomValue(p.rng)>=survival) return; p.throughput/=survival;
+    }
+    uint outputQueue=1u-pc.inputQueue,index=atomicAdd(counters.count[outputQueue],1u);
+    writePath(outputQueue,index,p);
+}
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    if (i>=counters.count[pc.inputQueue]) return;
+    shadows[i].valid=0u;
+    Path p=readPath(pc.inputQueue,i); Hit h=hits[i]; if (h.triangle==0xffffffffu) return;
+    Vertex a=vertices[3u*h.triangle],b=vertices[3u*h.triangle+1u],c=vertices[3u*h.triangle+2u];
+    TriangleInfo triangle=triangles[h.triangle]; Material material=materials[triangle.material];
+    vec3 point=p.origin+p.direction*h.distance,gn=a.normal; bool front=dot(p.direction,gn)<0.0; vec3 n=front ? gn : -gn;
+    if (p.depth>0u && p.depth<8u && material.type==3u && (p.flags&(OPTICAL|SPLIT))==0u) {
+        // 首次玻璃事件前的贡献只保存一次；两个后续分支使用独立槽。
+        prefixRadiance[p.slot/2u]=radiance[p.slot]; radiance[p.slot]=vec4(0);
+        p.flags|=OPTICAL; opticalPaths[p.slot].flags|=(p.depth>1u ? 12u : 8u);
+    }
+    if (p.depth==0u && (material.type==2u || material.type==3u)) p.flags|=OPTICAL;
+    if (p.depth<8u && material.type==3u && (p.flags&(OPTICAL|TERMINAL))==(OPTICAL|TERMINAL)) {
+        prefixOptical[p.slot]+=radiance[p.slot]; radiance[p.slot]=vec4(0);
+        resumeOptical(p.slot);
+        if ((p.flags&UNTRACKED)!=0u) opticalPaths[p.slot].flags|=4u;
+        p.flags &= ~(TERMINAL|UNTRACKED);
+    } else if ((p.flags&(OPTICAL|TERMINAL))==(OPTICAL|TERMINAL) && material.type!=4u) {
+        // 已有终端后的其他散射未保存在该光学链中，后续新链不能使用它伪造历史。
+        p.flags|=UNTRACKED;
+    }
+    if ((p.flags&OPTICAL)!=0u && (p.flags&TERMINAL)==0u) {
+        opticalPaths[p.slot].distance+=h.distance;
+        if ((material.type<=1u && p.depth<8u) || material.type==4u) {
+            latchOptical(p,h,material,a,b,c,point); p.flags|=TERMINAL;
+        }
+    }
+    if ((p.flags&INSIDE)!=0u) p.throughput*=exp(-material.absorption*h.distance);
+    if (material.type==4u) {
+        if (front && (p.flags&PRIMARY_RESTIR)==0u) {
+            float mis=1.0;
+            if ((p.flags&PREVIOUS_NEE)!=0u) {
+                float lightPdf=emitterDirectionPdf(h.triangle,h.distance,max(0.0,dot(gn,-p.direction)));
+                mis=powerWeight(p.lastBsdfPdf,lightPdf);
+            }
+            radiance[p.slot].rgb+=p.throughput*material.emission*mis;
+        }
+        return;
+    }
+    if (p.depth>=8u) return;
+    float w=1.0-h.bary.x-h.bary.y; vec2 uv=a.uv*w+b.uv*h.bary.x+c.uv*h.bary.y;
+    p.footprint+=p.cone*h.distance;
+    float lod=max(0.0,log2(max(1.0,p.footprint*float(textureSize(baseTexture,0).x))));
+    vec3 albedo=textureLod(baseTexture,vec3(uv,float(triangle.material)),lod).rgb;
+    float roughness=textureLod(roughTexture,vec3(uv,float(triangle.material)),lod).r;
+    bool useNee=p.depth>0u && (material.type==0u || material.type==1u);
+    if (useNee) sampleLight(p,i,point,gn,n,albedo,roughness,material.type);
+    p.flags &= ~(PREVIOUS_NEE|PRIMARY_RESTIR);
+    if (p.depth==0u && (material.type==0u || material.type==1u)) p.flags|=PRIMARY_RESTIR;
+    p.depth++;
+    if (material.type==0u) {
+        vec3 t,basis; frame(n,t,basis); float r=sqrt(randomValue(p.rng)),phi=2.0*PI*randomValue(p.rng);
+        vec3 local=vec3(r*cos(phi),r*sin(phi),sqrt(max(0.0,1.0-r*r)));
+        p.direction=normalize(toWorld(local,t,basis,n)); p.throughput*=albedo; p.cone=max(p.cone,0.5);
+        p.lastBsdfPdf=local.z/PI; if (useNee) p.flags|=PREVIOUS_NEE;
+        enqueue(p,point,gn); return;
+    }
+    if (material.type==1u) {
+        vec3 t,basis; frame(n,t,basis); vec3 view=toLocal(-p.direction,t,basis,n);
+        float alpha=max(roughness*roughness,0.0001),a2=alpha*alpha;
+        float xi1=randomValue(p.rng),xi2=randomValue(p.rng); vec3 micro=vndf(view,alpha,vec2(xi1,xi2)); vec3 wi=reflect(-view,micro);
+        if (wi.z<=0.0 || view.z<=0.0) return;
+        vec3 fresnel=albedo+(1.0-albedo)*pow(1.0-max(0.0,dot(view,micro)),5.0);
+        p.throughput*=fresnel*smithG2(view.z,wi.z,a2)/smithG1(view.z,a2);
+        p.lastBsdfPdf=ggxD(max(0.0,micro.z),a2)*smithG1(view.z,a2)/(4.0*view.z); if (useNee) p.flags|=PREVIOUS_NEE;
+        p.direction=normalize(toWorld(wi,t,basis,n)); p.cone=max(p.cone,roughness*0.25); enqueue(p,point,gn); return;
+    }
+    if (material.type==2u) {
+        if ((p.flags&OPTICAL)!=0u && (p.flags&TERMINAL)==0u) opticalEvent(p.slot,h.triangle,0u,front);
+        p.throughput*=albedo; p.direction=reflect(p.direction,n); enqueue(p,point,gn); return;
+    }
+    if (material.type==3u) {
+        atomicOr(signalFlags[p.slot/2u],1u);
+        float etaI=(p.flags&INSIDE)!=0u ? material.ior : 1.0,etaT=(p.flags&INSIDE)!=0u ? 1.0 : material.ior;
+        float cosine=clamp(dot(-p.direction,n),0.0,1.0),cosT;
+        float f=dielectricFresnel(cosine,etaI,etaT,cosT),eta=etaI/etaT;
+        vec3 reflected=reflect(p.direction,n),transmitted=eta*p.direction+(eta*cosine-cosT)*n;
+        if ((p.flags&SPLIT)==0u && f<1.0) {
+            Path reflection=p,transmission=p;
+            reflection.flags|=SPLIT; reflection.direction=reflected; reflection.throughput*=f;
+            transmission.flags|=SPLIT; transmission.slot=(p.slot/2u)*2u+1u; transmission.direction=normalize(transmitted);
+            if ((p.flags&OPTICAL)!=0u && (p.flags&TERMINAL)==0u) {
+                opticalPaths[transmission.slot]=opticalPaths[p.slot];
+                opticalEvent(reflection.slot,h.triangle,1u,front); opticalEvent(transmission.slot,h.triangle,2u,front);
+            }
+            transmission.throughput*=(1.0-f)*eta*eta;
+            if (front) transmission.flags|=INSIDE; else transmission.flags &= ~INSIDE;
+            reflection.rng=hashValue(p.rng^0xa511e9b3u); transmission.rng=hashValue(p.rng^0x63d83595u);
+            enqueue(reflection,point,gn); enqueue(transmission,point,gn); return;
+        }
+        p.flags|=SPLIT;
+        if (f>=1.0 || randomValue(p.rng)<f) {
+            p.direction=reflected;
+            if ((p.flags&OPTICAL)!=0u && (p.flags&TERMINAL)==0u) opticalEvent(p.slot,h.triangle,1u,front);
+        } else {
+            p.direction=normalize(transmitted); p.throughput*=eta*eta; if (front) p.flags|=INSIDE; else p.flags &= ~INSIDE;
+            if ((p.flags&OPTICAL)!=0u && (p.flags&TERMINAL)==0u) opticalEvent(p.slot,h.triangle,2u,front);
+        }
+        enqueue(p,point,gn);
+    }
+}

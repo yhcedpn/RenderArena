@@ -1,0 +1,26 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (i>=n) return;
+    Guide current=guides[(pc.frame&1u)*n+i]; Reservoir initial=reservoirs[i];
+    Reservoir previous=emptyReservoir(); Guide previousGuide=Guide(vec3(0),0u,vec3(0),0u,vec3(0),0.0,vec3(0),0xffffffffu);
+    uint j=0u;
+    if (previousPixel(current,i,j)) {
+        previousGuide=guides[((pc.frame^1u)&1u)*n+j];
+        previous=reservoirs[(2u+((pc.frame^1u)&1u))*n+j];
+        if (previous.M>32u) { float ratio=32.0/float(previous.M); previous.M=32u; previous.weightSum*=ratio; }
+    }
+    Reservoir combined=emptyReservoir(); uint rng=hashValue(i^hashValue(pc.frame+0xb5297a4du));
+    consider(combined,initial,current,rng); consider(combined,previous,current,rng);
+    if (combined.valid!=0u) {
+        float target=luminance(targetColor(current,combined.light,combined.bary));
+        float supported=target>0.0 ? float(initial.M) : 0.0;
+        if (previous.M>0u && luminance(targetColor(previousGuide,combined.light,combined.bary))>0.0) supported+=float(previous.M);
+        if (target>0.0 && supported>0.0) combined.W=combined.weightSum/(target*supported); else combined.valid=0u;
+    }
+    reservoirs[n+i]=combined;
+}

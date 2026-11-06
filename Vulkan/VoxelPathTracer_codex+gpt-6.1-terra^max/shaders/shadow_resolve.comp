@@ -1,0 +1,10 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    if (i>=counters.count[pc.inputQueue]) return;
+    Shadow task=shadows[i];
+    if (task.valid!=0u && task.visible!=0u) radiance[task.slot].rgb+=task.contribution;
+}

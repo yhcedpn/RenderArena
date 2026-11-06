@@ -1,0 +1,27 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (i>=n) return;
+    uint phase=(pc.frame&1u)*n; History h=histories[phase+i]; FilterValue result=FilterValue(vec3(0),0.0);
+    if (h.valid!=0u) {
+        result.color=h.color; result.variance=max(h.moment2-h.moment1*h.moment1,0.0);
+        if (h.historyLength<4u) {
+            ivec2 p=ivec2(int(i%pc.width),int(i/pc.width)); Guide center=guides[phase+i];
+            float m1=0.0,m2=0.0,total=0.0;
+            for (int y=-1;y<=1;++y) for (int x=-1;x<=1;++x) {
+                ivec2 q=p+ivec2(x,y);
+                if (any(lessThan(q,ivec2(0))) || any(greaterThanEqual(q,ivec2(pc.width,pc.height)))) continue;
+                uint j=uint(q.y)*pc.width+uint(q.x); History neighbour=histories[phase+j]; Guide other=guides[phase+j];
+                if (neighbour.valid==0u || !compatible(center,other)) continue;
+                float weight=float((x==0 ? 2 : 1)*(y==0 ? 2 : 1));
+                m1+=weight*neighbour.moment1; m2+=weight*neighbour.moment2; total+=weight;
+            }
+            if (total>0.0) { m1/=total; m2/=total; result.variance=max(result.variance,max(0.0,m2-m1*m1)); }
+        }
+    }
+    filters[i]=result;
+}

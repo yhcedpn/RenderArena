@@ -1,0 +1,24 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "restir.glsl"
+layout(local_size_x=64) in;
+void main() {
+    uint i=(gl_WorkGroupID.y*gl_NumWorkGroups.x+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x;
+    uint n=pc.width*pc.height; if (i>=n) return;
+    Guide guide=guides[(pc.frame&1u)*n+i]; History h=History(vec3(0),0.0,0.0,0u,0u,0u);
+    if (guide.type<=1u) {
+        vec3 value=signalFlags[i]!=0u ? prefixRadiance[i].rgb : radiance[2u*i].rgb+radiance[2u*i+1u].rgb;
+        if (guide.type==0u) for (int c=0;c<3;++c) value[c]=guide.albedo[c]>0.0 ? value[c]/guide.albedo[c] : 0.0;
+        float l=luminance(value); h.color=value; h.moment1=l; h.moment2=l*l; h.historyLength=1u; h.valid=1u;
+        uint previous=0u;
+        if (previousPixel(guide,i,previous)) {
+            History old=histories[((pc.frame^1u)&1u)*n+previous];
+            if (old.valid!=0u) {
+                h.historyLength=min(old.historyLength+1u,32u); float alpha=1.0/float(h.historyLength);
+                h.color=mix(old.color,value,alpha); h.moment1=mix(old.moment1,l,alpha); h.moment2=mix(old.moment2,l*l,alpha);
+            }
+        }
+    }
+    histories[(pc.frame&1u)*n+i]=h;
+}
