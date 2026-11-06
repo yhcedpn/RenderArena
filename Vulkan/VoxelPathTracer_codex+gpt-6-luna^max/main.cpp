@@ -1,4 +1,6 @@
+#include "src/app.hpp"
+
 int main()
 {
-    return 0;
+    return voxel::runApplication();
 }

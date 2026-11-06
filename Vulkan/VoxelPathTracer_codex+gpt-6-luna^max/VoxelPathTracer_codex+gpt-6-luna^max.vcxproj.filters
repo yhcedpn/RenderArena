@@ -7,6 +7,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\app.cpp"><Filter>源文件</Filter></ClCompile>
+    <ClCompile Include="src\scene.cpp"><Filter>源文件</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\app.hpp"><Filter>头文件</Filter></ClInclude>
+    <ClInclude Include="src\scene.hpp"><Filter>头文件</Filter></ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="VoxelPathTracer_TASK.md"><Filter>资源文件</Filter></None>
